@@ -29,6 +29,7 @@ void setup()
 
   GSM.begin(GSM_BAUD, SERIAL_8N1, GSM_RX, GSM_TX);
   GSM.println("AT");
+  mqttConnect();
 }
 
 void loop()
@@ -45,14 +46,29 @@ void loop()
 
   static unsigned long lastRun = millis() - 18000;
   if (millis() - lastRun > 20000)
-  { // Оновлювати кожні 20 секунд через 2 секунди.
+  { // Оновлювати кожні 20 секунд.
     lastRun = millis();
 
-    GSM.println("AT+CSQ");      // Signalstärke
-    GSM.println("AT+CEREG?");   // LTE Netzregistrierung
-    GSM.println("AT+CGATT?");   // Datenregistrierung
-    GSM.println("AT+CGACT?");   // PDP Kontext aktiv? (Datenverbindung)
-    GSM.println("AT+CGPADDR");  // IP-Adresse
-    GSM.println("AT+NETOPEN?"); // Socket-Service Status
+    GSM.println("AT+CSQ");      // Сила сигналу
+    GSM.println("AT+CEREG?");   // Реєстрація в мережі LTE
+    GSM.println("AT+CMQTTCONNECT?");   // Перевірте статус підключення
   }
+}
+
+void mqttConnect()
+{
+  GSM.println("AT+CMQTTSTART");
+  delay(2000);
+
+  GSM.printf("AT+CMQTTACCQ=0,\"%s\"\r\n", MQTT_CLIENT_ID);
+  delay(1000);
+
+  GSM.printf(
+    "AT+CMQTTCONNECT=0,\"tcp://%s:%d\",60,1,\"%s\",\"%s\"\r\n",
+    MQTT_HOST,
+    MQTT_PORT,
+    MQTT_USER,
+    MQTT_PASS
+  );
+  delay(3000);
 }
