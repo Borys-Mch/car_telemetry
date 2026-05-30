@@ -58,6 +58,8 @@ void mqttConnect()
   delay(2000);
 }
 
+// ===== MQTT =================================================
+
 void mqttPublish(int rssi)
 {
   int dbm = -113 + (rssi * 2);
@@ -96,8 +98,8 @@ void sendDiscovery()
     "device": {
       "identifiers": ["car_info"],
       "name": "Car Info",
-      "model": "ESP32 + A7670",
-      "manufacturer": "DIY"
+      "model": "ESP32-S3 + A7670E + ELM327",
+      "manufacturer": "DEREN"
     }
   })";
 
@@ -114,6 +116,8 @@ void sendDiscovery()
   GSM.println("AT+CMQTTPUB=0,1,60");
 }
 
+// ===== ШЛАГБАУМ =============================================
+
 void sendButtonDiscovery()
 {
   String topic = "homeassistant/button/car_gate/config";
@@ -125,9 +129,7 @@ void sendButtonDiscovery()
     "unique_id": "car_gate_btn",
     "device": {
       "identifiers": ["car_info"],
-      "name": "Car Info",
-      "model": "ESP32 + A7670",
-      "manufacturer": "DIY"
+      "name": "Car Info"
     }
   })";
 
@@ -162,9 +164,10 @@ void sendCallStatusDiscovery()
     "state_topic": "home/car/status",
     "value_template": "{{ value_json.call }}",
     "unique_id": "car_call_status",
+    "icon": "mdi:phone",
     "device": {
       "identifiers": ["car_info"],
-      "name": "Car Info",
+      "name": "Car Info"
     }
   })";
 
@@ -178,7 +181,7 @@ void sendCallStatusDiscovery()
   GSM.print(payload);
   delay(100);
 
-  GSM.println("AT+CMQTTPUB=0,1,60,1");
+  GSM.println("AT+CMQTTPUB=0,1,60,1"); // retain
 }
 
 void sendCallStatus(String status)
@@ -196,13 +199,65 @@ void sendCallStatus(String status)
   GSM.print(payload);
   delay(50);
 
-  GSM.println("AT+CMQTTPUB=0,1,60");
+  GSM.println("AT+CMQTTPUB=0,1,60,1");
 }
+
+// ===== ВХІДНІ ДЗВІНКИ =======================================
+
+void sendIncomingDiscovery()
+{
+  String topic = "homeassistant/sensor/car_incoming_call/config";
+
+  String payload = R"({
+    "name": "Incoming Call",
+    "state_topic": "home/car/incoming",
+    "value_template": "{{ value_json.number }}",
+    "unique_id": "car_incoming_call",
+    "icon": "mdi:phone-incoming",
+    "device": {
+      "identifiers": ["car_info"],
+      "name": "Car Info"
+    }
+  })";
+
+  GSM.printf("AT+CMQTTTOPIC=0,%d\r\n", topic.length());
+  delay(100);
+  GSM.print(topic);
+  delay(100);
+
+  GSM.printf("AT+CMQTTPAYLOAD=0,%d\r\n", payload.length());
+  delay(100);
+  GSM.print(payload);
+  delay(100);
+
+  GSM.println("AT+CMQTTPUB=0,1,60,1");
+}
+
+void sendIncomingCall(String number)
+{
+  String topic = "home/car/incoming";
+  String payload = "{\"number\":\"" + number + "\"}";
+
+  GSM.printf("AT+CMQTTTOPIC=0,%d\r\n", topic.length());
+  delay(50);
+  GSM.print(topic);
+  delay(50);
+
+  GSM.printf("AT+CMQTTPAYLOAD=0,%d\r\n", payload.length());
+  delay(50);
+  GSM.print(payload);
+  delay(50);
+
+  GSM.println("AT+CMQTTPUB=0,1,60,1");
+}
+
+// ===== SETUP ================================================
 
 void setup()
 {
   Serial.begin(115200);
   GSM.begin(GSM_BAUD, SERIAL_8N1, GSM_RX, GSM_TX);
+  GSM.println("AT+CLIP=1");
 
   delay(3000);
 
@@ -215,10 +270,13 @@ void setup()
   sendDiscovery();           // сигнал
   sendCallStatusDiscovery(); // статус дзвінка
   sendButtonDiscovery();     // кнопка
+  sendIncomingDiscovery();
   delay(1000);
 
   mqttSubscribe(); // підписка на команди
 }
+
+// ===== LOOP (основний таск — OBD + кнопка + виконання команд)
 
 void loop()
 {
@@ -252,6 +310,19 @@ void loop()
       if (line.indexOf("BUSY") != -1)
       {
         sendCallStatus("busy");
+      }
+
+      // вхідний дзвінок
+      if (line.startsWith("+CLIP:"))
+      {
+        int firstQuote = line.indexOf('"');
+        int secondQuote = line.indexOf('"', firstQuote + 1);
+
+        String number = line.substring(firstQuote + 1, secondQuote);
+
+        Serial.println("Incoming: " + number);
+
+        sendIncomingCall(number);
       }
 
       // команда з HA
