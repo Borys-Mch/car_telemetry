@@ -83,6 +83,37 @@ void requestSignal()
   sendAT("AT+CSQ");
 }
 
+void sendDiscovery()
+{
+  String topic = "homeassistant/sensor/car_signal/config";
+
+  String payload = R"({
+    "name": "Modem Signal",
+    "state_topic": "home/car/telemetry",
+    "unit_of_measurement": "dBm",
+    "value_template": "{{ value_json.dbm }}",
+    "unique_id": "modem_signal",
+    "device": {
+      "identifiers": ["car_info"],
+      "name": "Car Info",
+      "model": "ESP32 + A7670",
+      "manufacturer": "DIY"
+    }
+  })";
+
+  GSM.printf("AT+CMQTTTOPIC=0,%d\r\n", topic.length());
+  delay(100);
+  GSM.print(topic);
+  delay(100);
+
+  GSM.printf("AT+CMQTTPAYLOAD=0,%d\r\n", payload.length());
+  delay(100);
+  GSM.print(payload);
+  delay(100);
+
+  GSM.println("AT+CMQTTPUB=0,1,60");
+}
+
 void setup()
 {
   Serial.begin(115200);
@@ -94,6 +125,7 @@ void setup()
   delay(1000);
 
   mqttConnect();
+  sendDiscovery();
 }
 
 void loop()
