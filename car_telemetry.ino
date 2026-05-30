@@ -20,55 +20,118 @@
 // ===== UART =================================================
 HardwareSerial GSM(2);
 
+// буфер для парсингу
+String line = "";
+
+// таймер
+unsigned long lastSend = 0;
+
+void sendAT(const char *cmd)
+{
+  GSM.println(cmd);
+}
+
+void mqttConnect()
+{
+  sendAT("AT+CMQTTSTART");
+  delay(1000);
+
+  sendAT("AT+CSSLCFG=\"sslversion\",0,4");
+  delay(200);
+
+  sendAT("AT+CSSLCFG=\"authmode\",0,0"); // без перевірки
+  delay(200);
+
+  GSM.printf("AT+CMQTTACCQ=0,\"%s\",1\r\n", MQTT_CLIENT_ID);
+  delay(500);
+
+  sendAT("AT+CMQTTSSLCFG=0,0");
+  delay(200);
+
+  GSM.printf(
+      "AT+CMQTTCONNECT=0,\"tcp://%s:%d\",60,1,\"%s\",\"%s\"\r\n",
+      MQTT_HOST,
+      MQTT_PORT,
+      MQTT_USER,
+      MQTT_PASS);
+
+  delay(2000);
+}
+
+void mqttPublish(int rssi)
+{
+  int dbm = -113 + (rssi * 2);
+
+  String payload = "{\"rssi\":" + String(rssi) + ",\"dbm\":" + String(dbm) + "}";
+  String topic = "home/car/telemetry";
+
+  GSM.printf("AT+CMQTTTOPIC=0,%d\r\n", topic.length());
+  delay(100);
+  GSM.print(topic);
+  delay(100);
+
+  GSM.printf("AT+CMQTTPAYLOAD=0,%d\r\n", payload.length());
+  delay(100);
+  GSM.print(payload);
+  delay(100);
+
+  sendAT("AT+CMQTTPUB=0,1,60");
+}
+
+void requestSignal()
+{
+  sendAT("AT+CSQ");
+}
+
 void setup()
 {
   Serial.begin(115200);
-
-  delay(1000);
-  Serial.println("Serial connection ready");
-
   GSM.begin(GSM_BAUD, SERIAL_8N1, GSM_RX, GSM_TX);
-  GSM.println("AT");
+
+  delay(3000);
+
+  sendAT("AT");
+  delay(1000);
+
   mqttConnect();
 }
 
 void loop()
 {
+  // ЄДИНЕ місце де читається модем
   while (GSM.available())
   {
-    String resp = GSM.readStringUntil('\n');
-    resp.trim();
-    if (resp.length() > 0)
+    char c = GSM.read();
+    Serial.write(c);
+
+    if (c == '\n')
     {
-      Serial.println("Modem: " + resp);
+      line.trim();
+
+      // парсимо сигнал
+      if (line.startsWith("+CSQ:"))
+      {
+        int comma = line.indexOf(',');
+        int rssi = line.substring(6, comma).toInt();
+
+        if (rssi != 99)
+        {
+          mqttPublish(rssi);
+        }
+      }
+
+      line = "";
+    }
+    else
+    {
+      line += c;
     }
   }
 
-  static unsigned long lastRun = millis() - 18000;
-  if (millis() - lastRun > 20000)
-  { // Оновлювати кожні 20 секунд.
-    lastRun = millis();
-
-    GSM.println("AT+CSQ");      // Сила сигналу
-    GSM.println("AT+CEREG?");   // Реєстрація в мережі LTE
-    GSM.println("AT+CMQTTCONNECT?");   // Перевірте статус підключення
+  // кожні 10 сек запит сигналу
+  if (millis() - lastSend > 10000)
+  {
+    lastSend = millis();
+    requestSignal();
   }
-}
-
-void mqttConnect()
-{
-  GSM.println("AT+CMQTTSTART");
-  delay(2000);
-
-  GSM.printf("AT+CMQTTACCQ=0,\"%s\"\r\n", MQTT_CLIENT_ID);
-  delay(1000);
-
-  GSM.printf(
-    "AT+CMQTTCONNECT=0,\"tcp://%s:%d\",60,1,\"%s\",\"%s\"\r\n",
-    MQTT_HOST,
-    MQTT_PORT,
-    MQTT_USER,
-    MQTT_PASS
-  );
-  delay(3000);
 }
