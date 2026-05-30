@@ -114,6 +114,91 @@ void sendDiscovery()
   GSM.println("AT+CMQTTPUB=0,1,60");
 }
 
+void sendButtonDiscovery()
+{
+  String topic = "homeassistant/button/car_gate/config";
+
+  String payload = R"({
+    "name": "Gate Open",
+    "command_topic": "home/car/cmd",
+    "payload_press": "gate",
+    "unique_id": "car_gate_btn",
+    "device": {
+      "identifiers": ["car_info"],
+      "name": "Car Info",
+      "model": "ESP32 + A7670",
+      "manufacturer": "DIY"
+    }
+  })";
+
+  GSM.printf("AT+CMQTTTOPIC=0,%d\r\n", topic.length());
+  delay(100);
+  GSM.print(topic);
+  delay(100);
+
+  GSM.printf("AT+CMQTTPAYLOAD=0,%d\r\n", payload.length());
+  delay(100);
+  GSM.print(payload);
+  delay(100);
+
+  GSM.println("AT+CMQTTPUB=0,1,60,1"); // retain
+}
+
+void mqttSubscribe()
+{
+  String topic = "home/car/cmd";
+
+  GSM.printf("AT+CMQTTSUB=0,%d,1\r\n", topic.length());
+  delay(100);
+  GSM.print(topic);
+}
+
+void sendCallStatusDiscovery()
+{
+  String topic = "homeassistant/sensor/car_call_status/config";
+
+  String payload = R"({
+    "name": "Car Call Status",
+    "state_topic": "home/car/status",
+    "value_template": "{{ value_json.call }}",
+    "unique_id": "car_call_status",
+    "device": {
+      "identifiers": ["car_info"],
+      "name": "Car Info",
+    }
+  })";
+
+  GSM.printf("AT+CMQTTTOPIC=0,%d\r\n", topic.length());
+  delay(100);
+  GSM.print(topic);
+  delay(100);
+
+  GSM.printf("AT+CMQTTPAYLOAD=0,%d\r\n", payload.length());
+  delay(100);
+  GSM.print(payload);
+  delay(100);
+
+  GSM.println("AT+CMQTTPUB=0,1,60,1");
+}
+
+void sendCallStatus(String status)
+{
+  String topic = "home/car/status";
+  String payload = "{\"call\":\"" + status + "\"}";
+
+  GSM.printf("AT+CMQTTTOPIC=0,%d\r\n", topic.length());
+  delay(50);
+  GSM.print(topic);
+  delay(50);
+
+  GSM.printf("AT+CMQTTPAYLOAD=0,%d\r\n", payload.length());
+  delay(50);
+  GSM.print(payload);
+  delay(50);
+
+  GSM.println("AT+CMQTTPUB=0,1,60");
+}
+
 void setup()
 {
   Serial.begin(115200);
@@ -125,12 +210,18 @@ void setup()
   delay(1000);
 
   mqttConnect();
-  sendDiscovery();
+  delay(2000);
+
+  sendDiscovery();           // сигнал
+  sendCallStatusDiscovery(); // статус дзвінка
+  sendButtonDiscovery();     // кнопка
+  delay(1000);
+
+  mqttSubscribe(); // підписка на команди
 }
 
 void loop()
 {
-  // ЄДИНЕ місце де читається модем
   while (GSM.available())
   {
     char c = GSM.read();
@@ -140,7 +231,7 @@ void loop()
     {
       line.trim();
 
-      // парсимо сигнал
+      // сигнал
       if (line.startsWith("+CSQ:"))
       {
         int comma = line.indexOf(',');
@@ -152,6 +243,26 @@ void loop()
         }
       }
 
+      // статус дзвінка
+      if (line.indexOf("NO CARRIER") != -1)
+      {
+        sendCallStatus("idle");
+      }
+
+      if (line.indexOf("BUSY") != -1)
+      {
+        sendCallStatus("busy");
+      }
+
+      // команда з HA
+      if (line.indexOf("gate") != -1)
+      {
+        Serial.println("OPEN GATE");
+
+        sendCallStatus("calling");
+        GSM.printf("ATD%s;\r\n", BARRIER_NUMBER);
+      }
+
       line = "";
     }
     else
@@ -160,10 +271,10 @@ void loop()
     }
   }
 
-  // кожні 10 сек запит сигналу
+  // кожні 10 сек
   if (millis() - lastSend > 10000)
   {
     lastSend = millis();
-    requestSignal();
+    GSM.println("AT+CSQ");
   }
 }
