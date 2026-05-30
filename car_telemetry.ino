@@ -251,6 +251,37 @@ void sendIncomingCall(String number)
   GSM.println("AT+CMQTTPUB=0,1,60,1");
 }
 
+// ===== ЗАВЕРШЕННЯ ДЗВІНКА ================================
+
+void sendEndCallDiscovery()
+{
+  String topic = "homeassistant/button/car_call_end/config";
+
+  String payload = R"({
+    "name": "End Call",
+    "command_topic": "home/car/cmd",
+    "payload_press": "hangup",
+    "unique_id": "car_call_end_btn",
+    "icon": "mdi:phone-hangup",
+    "device": {
+      "identifiers": ["car_info"],
+      "name": "Car Info"
+    }
+  })";
+
+  GSM.printf("AT+CMQTTTOPIC=0,%d\r\n", topic.length());
+  delay(100);
+  GSM.print(topic);
+  delay(100);
+
+  GSM.printf("AT+CMQTTPAYLOAD=0,%d\r\n", payload.length());
+  delay(100);
+  GSM.print(payload);
+  delay(100);
+
+  GSM.println("AT+CMQTTPUB=0,1,60,1"); // retain
+}
+
 // ===== SETUP ================================================
 
 void setup()
@@ -270,7 +301,8 @@ void setup()
   sendDiscovery();           // сигнал
   sendCallStatusDiscovery(); // статус дзвінка
   sendButtonDiscovery();     // кнопка
-  sendIncomingDiscovery();
+  sendIncomingDiscovery();   // номер вхідного дзвінка
+  sendEndCallDiscovery();    // завершення дзвінка
   delay(1000);
 
   mqttSubscribe(); // підписка на команди
@@ -301,12 +333,6 @@ void loop()
         }
       }
 
-      // статус дзвінка
-      if (line.indexOf("NO CARRIER") != -1)
-      {
-        sendCallStatus("idle");
-      }
-
       if (line.indexOf("BUSY") != -1)
       {
         sendCallStatus("busy");
@@ -323,6 +349,20 @@ void loop()
         Serial.println("Incoming: " + number);
 
         sendIncomingCall(number);
+      }
+
+      // завершення дзвінка
+      if (line.indexOf("hangup") != -1)
+      {
+        Serial.println("END CALL");
+
+        GSM.println("AT+CHUP");
+      }
+
+      // статус дзвінка
+      if (line.indexOf("NO CARRIER") != -1)
+      {
+        sendCallStatus("idle");
       }
 
       // команда з HA
