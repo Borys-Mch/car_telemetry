@@ -20,19 +20,35 @@
 // ===== UART =================================================
 HardwareSerial GSM(2);
 
-// буфер для парсингу
+// ===== БУФЕР ДЛЯ ПАРСИНГУ ===================================
 String line = "";
 
-// таймер
+// ===== ТАЙМЕР ===============================================
 unsigned long lastSend = 0;
+unsigned long lastGPS = 0;
+unsigned long lastMQTT = 0;
+unsigned long lastMQTTsend = 0;
+
+bool mqttBusy = false;
 
 void sendAT(const char *cmd)
 {
   GSM.println(cmd);
 }
 
+// ===== MQTT =================================================
+
 void mqttConnect()
 {
+  GSM.println("AT+CMQTTDISC=0,120");
+  delay(500);
+
+  GSM.println("AT+CMQTTREL=0");
+  delay(500);
+
+  GSM.println("AT+CMQTTSTOP");
+  delay(1000);
+
   sendAT("AT+CMQTTSTART");
   delay(1000);
 
@@ -58,26 +74,43 @@ void mqttConnect()
   delay(2000);
 }
 
-// ===== MQTT =================================================
+void mqttSend(String topic, String payload, bool retain = false)
+{
+  if (millis() - lastMQTTsend < 1500)
+  {
+    delay(1500 - (millis() - lastMQTTsend));
+  }
 
-void mqttPublish(int rssi)
+  lastMQTTsend = millis();
+
+  GSM.printf("AT+CMQTTTOPIC=0,%d\r\n", topic.length());
+  delay(300);
+
+  GSM.print(topic);
+  delay(300);
+
+  GSM.printf("AT+CMQTTPAYLOAD=0,%d\r\n", payload.length());
+  delay(300);
+
+  GSM.print(payload);
+  delay(300);
+
+  if (retain)
+    GSM.println("AT+CMQTTPUB=0,1,60,1");
+  else
+    GSM.println("AT+CMQTTPUB=0,1,60");
+
+  delay(500);
+}
+
+// ===== MOBILE SIGNAL ========================================
+
+void sendSignal(int rssi)
 {
   int dbm = -113 + (rssi * 2);
 
   String payload = "{\"rssi\":" + String(rssi) + ",\"dbm\":" + String(dbm) + "}";
-  String topic = "home/car/telemetry";
-
-  GSM.printf("AT+CMQTTTOPIC=0,%d\r\n", topic.length());
-  delay(100);
-  GSM.print(topic);
-  delay(100);
-
-  GSM.printf("AT+CMQTTPAYLOAD=0,%d\r\n", payload.length());
-  delay(100);
-  GSM.print(payload);
-  delay(100);
-
-  sendAT("AT+CMQTTPUB=0,1,60");
+  mqttSend("home/car/telemetry", payload, false);
 }
 
 void requestSignal()
@@ -85,10 +118,8 @@ void requestSignal()
   sendAT("AT+CSQ");
 }
 
-void sendDiscovery()
+void sendSignalDiscovery()
 {
-  String topic = "homeassistant/sensor/car_signal/config";
-
   String payload = R"({
     "name": "Modem Signal",
     "state_topic": "home/car/telemetry",
@@ -103,25 +134,13 @@ void sendDiscovery()
     }
   })";
 
-  GSM.printf("AT+CMQTTTOPIC=0,%d\r\n", topic.length());
-  delay(100);
-  GSM.print(topic);
-  delay(100);
-
-  GSM.printf("AT+CMQTTPAYLOAD=0,%d\r\n", payload.length());
-  delay(100);
-  GSM.print(payload);
-  delay(100);
-
-  GSM.println("AT+CMQTTPUB=0,1,60");
+  mqttSend("homeassistant/sensor/car_signal/config", payload, false);
 }
 
 // ===== ШЛАГБАУМ =============================================
 
 void sendButtonDiscovery()
 {
-  String topic = "homeassistant/button/car_gate/config";
-
   String payload = R"({
     "name": "Gate Open",
     "command_topic": "home/car/cmd",
@@ -133,17 +152,7 @@ void sendButtonDiscovery()
     }
   })";
 
-  GSM.printf("AT+CMQTTTOPIC=0,%d\r\n", topic.length());
-  delay(100);
-  GSM.print(topic);
-  delay(100);
-
-  GSM.printf("AT+CMQTTPAYLOAD=0,%d\r\n", payload.length());
-  delay(100);
-  GSM.print(payload);
-  delay(100);
-
-  GSM.println("AT+CMQTTPUB=0,1,60,1"); // retain
+  mqttSend("homeassistant/button/car_gate/config", payload, true);
 }
 
 void mqttSubscribe()
@@ -157,8 +166,6 @@ void mqttSubscribe()
 
 void sendCallStatusDiscovery()
 {
-  String topic = "homeassistant/sensor/car_call_status/config";
-
   String payload = R"({
     "name": "Car Call Status",
     "state_topic": "home/car/status",
@@ -171,47 +178,25 @@ void sendCallStatusDiscovery()
     }
   })";
 
-  GSM.printf("AT+CMQTTTOPIC=0,%d\r\n", topic.length());
-  delay(100);
-  GSM.print(topic);
-  delay(100);
-
-  GSM.printf("AT+CMQTTPAYLOAD=0,%d\r\n", payload.length());
-  delay(100);
-  GSM.print(payload);
-  delay(100);
-
-  GSM.println("AT+CMQTTPUB=0,1,60,1"); // retain
+  mqttSend("homeassistant/sensor/car_call_status/config", payload, true);
 }
 
 void sendCallStatus(String status)
 {
-  String topic = "home/car/status";
   String payload = "{\"call\":\"" + status + "\"}";
 
-  GSM.printf("AT+CMQTTTOPIC=0,%d\r\n", topic.length());
-  delay(50);
-  GSM.print(topic);
-  delay(50);
-
-  GSM.printf("AT+CMQTTPAYLOAD=0,%d\r\n", payload.length());
-  delay(50);
-  GSM.print(payload);
-  delay(50);
-
-  GSM.println("AT+CMQTTPUB=0,1,60,1");
+  mqttSend("home/car/status", payload, true);
 }
 
 // ===== ВХІДНІ ДЗВІНКИ =======================================
 
 void sendIncomingDiscovery()
 {
-  String topic = "homeassistant/sensor/car_incoming_call/config";
-
   String payload = R"({
     "name": "Incoming Call",
     "state_topic": "home/car/incoming",
     "value_template": "{{ value_json.number }}",
+    "json_attributes_topic": "home/car/incoming",
     "unique_id": "car_incoming_call",
     "icon": "mdi:phone-incoming",
     "device": {
@@ -220,43 +205,33 @@ void sendIncomingDiscovery()
     }
   })";
 
-  GSM.printf("AT+CMQTTTOPIC=0,%d\r\n", topic.length());
-  delay(100);
-  GSM.print(topic);
-  delay(100);
-
-  GSM.printf("AT+CMQTTPAYLOAD=0,%d\r\n", payload.length());
-  delay(100);
-  GSM.print(payload);
-  delay(100);
-
-  GSM.println("AT+CMQTTPUB=0,1,60,1");
+  mqttSend("homeassistant/sensor/car_incoming_call/config", payload, true);
 }
 
 void sendIncomingCall(String number)
 {
-  String topic = "home/car/incoming";
-  String payload = "{\"number\":\"" + number + "\"}";
+  String payload = "{";
+  payload += "\"number\":\"" + number + "\",";
+  payload += "\"state\":\"ringing\"";
+  payload += "}";
 
-  GSM.printf("AT+CMQTTTOPIC=0,%d\r\n", topic.length());
-  delay(50);
-  GSM.print(topic);
-  delay(50);
+  mqttSend("home/car/incoming", payload, true);
+}
 
-  GSM.printf("AT+CMQTTPAYLOAD=0,%d\r\n", payload.length());
-  delay(50);
-  GSM.print(payload);
-  delay(50);
+void clearIncomingCall()
+{
+  String payload = "{";
+  payload += "\"number\":\"\",";
+  payload += "\"state\":\"idle\"";
+  payload += "}";
 
-  GSM.println("AT+CMQTTPUB=0,1,60,1");
+  mqttSend("home/car/incoming", payload, true);
 }
 
 // ===== ЗАВЕРШЕННЯ ДЗВІНКА ================================
 
 void sendEndCallDiscovery()
 {
-  String topic = "homeassistant/button/car_call_end/config";
-
   String payload = R"({
     "name": "End Call",
     "command_topic": "home/car/cmd",
@@ -269,17 +244,40 @@ void sendEndCallDiscovery()
     }
   })";
 
-  GSM.printf("AT+CMQTTTOPIC=0,%d\r\n", topic.length());
-  delay(100);
-  GSM.print(topic);
-  delay(100);
+  mqttSend("homeassistant/button/car_call_end/config", payload, true);
+}
 
-  GSM.printf("AT+CMQTTPAYLOAD=0,%d\r\n", payload.length());
-  delay(100);
-  GSM.print(payload);
-  delay(100);
+// ===== GPS ==================================================
 
-  GSM.println("AT+CMQTTPUB=0,1,60,1"); // retain
+void sendGPS(String lat, String lon, String sats)
+{
+  if (sats.length() == 0)
+    sats = "0";
+
+  String payload = "{";
+  payload += "\"latitude\":" + lat + ",";
+  payload += "\"longitude\":" + lon + ",";
+  payload += "\"sat\":" + sats;
+  payload += "}";
+
+  mqttSend("home/car/gps", payload, true);
+}
+
+void sendGPSDiscovery()
+{
+  String payload = R"({
+    "name": "Car GPS",
+    "state_topic": "home/car/gps",
+    "json_attributes_topic": "home/car/gps",
+    "unique_id": "car_gps_tracker",
+    "source_type": "gps",
+    "device": {
+      "identifiers": ["car_info"],
+      "name": "Car Info"
+    }
+  })";
+
+  mqttSend("homeassistant/device_tracker/car_gps/config", payload, true);
 }
 
 // ===== SETUP ================================================
@@ -289,8 +287,12 @@ void setup()
   Serial.begin(115200);
   GSM.begin(GSM_BAUD, SERIAL_8N1, GSM_RX, GSM_TX);
   GSM.println("AT+CLIP=1");
-
   delay(3000);
+
+  GSM.println("AT+CGNSSPWR=1");
+  delay(1000);
+  GSM.println("AT+CGNSSINFO=0");
+  delay(500);
 
   sendAT("AT");
   delay(1000);
@@ -298,12 +300,18 @@ void setup()
   mqttConnect();
   delay(2000);
 
-  sendDiscovery();           // сигнал
+  sendSignalDiscovery(); // сигнал
+  delay(500);
   sendCallStatusDiscovery(); // статус дзвінка
-  sendButtonDiscovery();     // кнопка
-  sendIncomingDiscovery();   // номер вхідного дзвінка
-  sendEndCallDiscovery();    // завершення дзвінка
-  delay(1000);
+  delay(500);
+  sendButtonDiscovery(); // кнопка
+  delay(500);
+  sendIncomingDiscovery(); // номер вхідного дзвінка
+  delay(500);
+  sendEndCallDiscovery(); // завершення дзвінка
+  delay(500);
+  sendGPSDiscovery(); // GPS
+  delay(500);
 
   mqttSubscribe(); // підписка на команди
 }
@@ -329,7 +337,7 @@ void loop()
 
         if (rssi != 99)
         {
-          mqttPublish(rssi);
+          sendSignal(rssi);
         }
       }
 
@@ -363,6 +371,47 @@ void loop()
       if (line.indexOf("NO CARRIER") != -1)
       {
         sendCallStatus("idle");
+        clearIncomingCall();
+      }
+
+      // дані GPS
+      if (line.startsWith("+CGNSSINFO:"))
+      {
+        // розбиваємо
+        int idx[20];
+        int count = 0;
+
+        for (int i = 0; i < line.length(); i++)
+        {
+          if (line[i] == ',')
+          {
+            idx[count++] = i;
+          }
+        }
+
+        String lat = line.substring(idx[4] + 1, idx[5]);
+        String latDir = line.substring(idx[5] + 1, idx[6]);
+
+        String lon = line.substring(idx[6] + 1, idx[7]);
+        String lonDir = line.substring(idx[7] + 1, idx[8]);
+
+        String sats = line.substring(idx[count - 1] + 1);
+
+        // напрямки
+        if (latDir == "S")
+          lat = "-" + lat;
+        if (lonDir == "W")
+          lon = "-" + lon;
+
+        Serial.println("GPS: " + lat + ", " + lon);
+
+        sendGPS(lat, lon, sats);
+      }
+
+      if (millis() - lastGPS > 10000)
+      {
+        lastGPS = millis();
+        GSM.println("AT+CGNSSINFO");
       }
 
       // команда з HA
