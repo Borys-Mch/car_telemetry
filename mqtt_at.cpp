@@ -4,9 +4,20 @@
 
 StaticJsonDocument<256> mqttDoc;
 
-const char *TOPIC_AVAIL = "car01/availability";
-const char *TOPIC_STATUS = "car01/status";
-const char *TOPIC_SIGNAL = "car01/signal";
+const char *TOPIC_AVAIL = "car/availability";
+const char *TOPIC_STATUS = "car/status";
+const char *TOPIC_SIGNAL = "car/signal";
+
+static const char *DISCOVERY_PREFIX = "homeassistant";
+static const char *DEVICE_ID = "car_telemetry";
+
+static void addDeviceBlock(JsonObject &dev)
+{
+  dev["identifiers"][0] = DEVICE_ID;
+  dev["name"] = "Car Telemetry";
+  dev["model"] = "ESP32-S3 + A7670E";
+  dev["manufacturer"] = "DEREN";
+}
 
 static void mqttConnectRaw()
 {
@@ -55,17 +66,70 @@ void mqttSend(const String &topic, const String &payload, bool retain)
   waitForResponse("OK", "ERROR", 5000);
 }
 
+static void publishSignalDiscovery()
+{
+  String topic = String(DISCOVERY_PREFIX) +
+                 "/sensor/" +
+                 DEVICE_ID +
+                 "_signal/config";
+
+  mqttPublishJson(topic, [](JsonObject &root)
+                  {
+    root["name"]            = "Car Modem Signal";
+    root["unique_id"]       = String(DEVICE_ID) + "_signal";
+    root["state_topic"]     = TOPIC_SIGNAL;
+    root["unit_of_measurement"] = "dBm";
+    root["value_template"]  = "{{ value_json.dbm }}";
+    root["device_class"]    = "signal_strength";
+    root["availability_topic"] = TOPIC_AVAIL;
+
+    JsonObject dev = root["device"].to<JsonObject>();
+    addDeviceBlock(dev); }, true);
+}
+
+static void publishStatusDiscovery()
+{
+  String topic = String(DISCOVERY_PREFIX) +
+                 "/sensor/" +
+                 DEVICE_ID +
+                 "_status/config";
+
+  mqttPublishJson(topic, [](JsonObject &root)
+                  {
+    root["name"]        = "Car Telemetry Status";
+    root["unique_id"]   = String(DEVICE_ID) + "_status";
+    root["state_topic"] = TOPIC_STATUS;
+    root["value_template"] = "{{ value_json.state }}";
+    root["icon"]        = "mdi:car-connected";
+    root["availability_topic"] = TOPIC_AVAIL;
+
+    JsonObject dev = root["device"].to<JsonObject>();
+    addDeviceBlock(dev); }, true);
+}
+
+void mqttSetAvailabilityOnline()
+{
+  mqttSend(TOPIC_AVAIL, "online", true);
+}
+
+void mqttSetAvailabilityOffline()
+{
+  mqttSend(TOPIC_AVAIL, "offline", true);
+}
+
 bool mqttInit()
 {
   mqttConnectRaw();
-
-  mqttPublishJson(TOPIC_AVAIL, [](JsonObject &root)
-                  { root["state"] = "online"; }, true);
+  mqttSetAvailabilityOnline();
 
   mqttPublishJson(TOPIC_STATUS, [](JsonObject &root)
                   {
     root["state"]   = "booted";
     root["version"] = "0.1-gsm-mqtt"; }, false);
+
+  // нове:
+  publishSignalDiscovery();
+  publishStatusDiscovery();
 
   return true;
 }
