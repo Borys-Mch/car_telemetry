@@ -30,10 +30,132 @@ unsigned long lastMQTT = 0;
 unsigned long lastMQTTsend = 0;
 
 bool mqttBusy = false;
+bool modemReady = false;
 
 void sendAT(const char *cmd)
 {
   GSM.println(cmd);
+}
+
+void flushGSM()
+{
+  while (GSM.available())
+  {
+    Serial.write(GSM.read());
+  }
+}
+
+bool waitForResponse(const char *ok, const char *err = "ERROR", uint32_t timeout = 2000)
+{
+  String resp = "";
+  uint32_t start = millis();
+
+  while (millis() - start < timeout)
+  {
+    while (GSM.available())
+    {
+      char c = GSM.read();
+      resp += c;
+      Serial.write(c);
+    }
+
+    if (resp.indexOf(ok) != -1)
+      return true;
+    if (err && resp.indexOf(err) != -1)
+      return false;
+  }
+
+  return false;
+}
+
+bool sendATWait(const char *cmd, const char *ok = "OK", uint32_t timeout = 2000)
+{
+  flushGSM();
+  Serial.print(">> ");
+  Serial.println(cmd);
+  GSM.println(cmd);
+  return waitForResponse(ok, "ERROR", timeout);
+}
+
+bool waitForAT(uint32_t totalTimeout = 30000)
+{
+  uint32_t start = millis();
+
+  while (millis() - start < totalTimeout)
+  {
+    if (sendATWait("AT", "OK", 1000))
+    {
+      return true;
+    }
+    delay(1000);
+  }
+
+  return false;
+}
+
+bool waitForSIM(uint32_t totalTimeout = 20000)
+{
+  uint32_t start = millis();
+
+  while (millis() - start < totalTimeout)
+  {
+    flushGSM();
+    Serial.println(">> AT+CPIN?");
+    GSM.println("AT+CPIN?");
+
+    String resp = "";
+    uint32_t t = millis();
+
+    while (millis() - t < 1500)
+    {
+      while (GSM.available())
+      {
+        char c = GSM.read();
+        resp += c;
+        Serial.write(c);
+      }
+    }
+
+    if (resp.indexOf("READY") != -1)
+      return true;
+    delay(1000);
+  }
+
+  return false;
+}
+
+bool waitForNetwork(uint32_t totalTimeout = 45000)
+{
+  uint32_t start = millis();
+
+  while (millis() - start < totalTimeout)
+  {
+    flushGSM();
+    Serial.println(">> AT+CREG?");
+    GSM.println("AT+CREG?");
+
+    String resp = "";
+    uint32_t t = millis();
+
+    while (millis() - t < 1500)
+    {
+      while (GSM.available())
+      {
+        char c = GSM.read();
+        resp += c;
+        Serial.write(c);
+      }
+    }
+
+    if (resp.indexOf("+CREG: 0,1") != -1 || resp.indexOf("+CREG: 0,5") != -1)
+    {
+      return true;
+    }
+
+    delay(1500);
+  }
+
+  return false;
 }
 
 // ===== MQTT =================================================
@@ -249,6 +371,15 @@ void sendEndCallDiscovery()
 
 // ===== GPS ==================================================
 
+bool isValidUkraineRange(float lat, float lon)
+{
+  if (lat < 44.0 || lat > 53.0)
+    return false;
+  if (lon < 22.0 || lon > 42.0)
+    return false;
+  return true;
+}
+
 void sendGPS(String lat, String lon, String sats)
 {
   if (sats.length() == 0)
@@ -285,35 +416,72 @@ void sendGPSDiscovery()
 void setup()
 {
   Serial.begin(115200);
+  delay(300);
+
   GSM.begin(GSM_BAUD, SERIAL_8N1, GSM_RX, GSM_TX);
-  GSM.println("AT+CLIP=1");
-  delay(3000);
 
-  GSM.println("AT+CGNSSPWR=1");
-  delay(1000);
-  GSM.println("AT+CGNSSINFO=0");
-  delay(500);
+  Serial.println();
+  Serial.println("=== ESP32 boot ===");
+  Serial.println("Waiting for modem autostart...");
 
-  sendAT("AT");
+  delay(3000); // дати модему трохи часу після подачі живлення
+
+  if (!waitForAT(30000))
+  {
+    Serial.println("ERROR: modem does not answer AT");
+    modemReady = false;
+    return;
+  }
+
+  Serial.println("MODEM OK");
+  modemReady = true;
+
+  sendATWait("ATE0");
+  sendATWait("AT+CMEE=2");
+
+  if (!waitForSIM(20000))
+  {
+    Serial.println("ERROR: SIM not ready");
+    modemReady = false;
+    return;
+  }
+
+  Serial.println("SIM READY");
+
+  if (!waitForNetwork(45000))
+  {
+    Serial.println("ERROR: network not registered");
+    modemReady = false;
+    return;
+  }
+
+  Serial.println("NETWORK READY");
+
+  // GNSS краще вмикати вже після готовності модема
+  sendATWait("AT+CLIP=1");
+  sendATWait("AT+CGNSSPWR=1", "OK", 3000);
+
+  // Можна дати GNSS трохи часу на старт
   delay(1000);
 
   mqttConnect();
   delay(2000);
+  sendSignalDiscovery();
+  delay(500);
+  sendCallStatusDiscovery();
+  delay(500);
+  sendButtonDiscovery();
+  delay(500);
+  sendIncomingDiscovery();
+  delay(500);
+  sendEndCallDiscovery();
+  delay(500);
+  sendGPSDiscovery();
+  delay(500);
 
-  sendSignalDiscovery(); // сигнал
-  delay(500);
-  sendCallStatusDiscovery(); // статус дзвінка
-  delay(500);
-  sendButtonDiscovery(); // кнопка
-  delay(500);
-  sendIncomingDiscovery(); // номер вхідного дзвінка
-  delay(500);
-  sendEndCallDiscovery(); // завершення дзвінка
-  delay(500);
-  sendGPSDiscovery(); // GPS
-  delay(500);
+  mqttSubscribe();
 
-  mqttSubscribe(); // підписка на команди
+  Serial.println("SETUP DONE");
 }
 
 // ===== LOOP (основний таск — OBD + кнопка + виконання команд)
@@ -377,35 +545,41 @@ void loop()
       // дані GPS
       if (line.startsWith("+CGNSSINFO:"))
       {
-        // розбиваємо
         int idx[20];
         int count = 0;
 
         for (int i = 0; i < line.length(); i++)
         {
           if (line[i] == ',')
-          {
             idx[count++] = i;
-          }
         }
 
-        String lat = line.substring(idx[4] + 1, idx[5]);
-        String latDir = line.substring(idx[5] + 1, idx[6]);
+        if (count >= 8)
+        {
+          String lat = line.substring(idx[4] + 1, idx[5]);
+          String latDir = line.substring(idx[5] + 1, idx[6]);
+          String lon = line.substring(idx[6] + 1, idx[7]);
+          String lonDir = line.substring(idx[7] + 1, idx[8]);
+          String sats = line.substring(idx[count - 1] + 1);
 
-        String lon = line.substring(idx[6] + 1, idx[7]);
-        String lonDir = line.substring(idx[7] + 1, idx[8]);
+          if (latDir == "S")
+            lat = "-" + lat;
+          if (lonDir == "W")
+            lon = "-" + lon;
 
-        String sats = line.substring(idx[count - 1] + 1);
+          float flat = lat.toFloat();
+          float flon = lon.toFloat();
 
-        // напрямки
-        if (latDir == "S")
-          lat = "-" + lat;
-        if (lonDir == "W")
-          lon = "-" + lon;
-
-        Serial.println("GPS: " + lat + ", " + lon);
-
-        sendGPS(lat, lon, sats);
+          if (isValidUkraineRange(flat, flon))
+          {
+            Serial.println("GPS: " + lat + ", " + lon);
+            sendGPS(lat, lon, sats);
+          }
+          else
+          {
+            Serial.println("GPS rejected as invalid fix");
+          }
+        }
       }
 
       if (millis() - lastGPS > 10000)
