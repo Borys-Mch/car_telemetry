@@ -1,5 +1,6 @@
 #include "modem.h"
 #include "mqtt_at.h"
+#include "gps_at.h"
 
 String line;
 unsigned long lastSignalReq = 0;
@@ -28,6 +29,7 @@ void setup()
     delay(10000);
     ESP.restart();
   }
+  gpsInit();
 }
 
 void loop()
@@ -61,4 +63,5 @@ void loop()
     lastSignalReq = millis();
     GSM.println("AT+CSQ");
   }
+  gpsLoop();
 }
