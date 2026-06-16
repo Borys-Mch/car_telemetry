@@ -9,6 +9,7 @@
 #include "config.h"
 #include "secrets.h"
 #include "modem.h"
+#include "mqtt.h"
 
 void setup()
 {
@@ -28,6 +29,11 @@ void setup()
   {
     Serial.println("MODEM INIT OK");
   }
+
+  // MQTT
+  mqttConnect();
+  delay(2000);
+  mqttTestPublish();
 }
 
 void loop()
