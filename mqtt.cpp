@@ -6,6 +6,7 @@
 // будемо використовувати той самий lastMQTTsend, що й раніше,
 // але поки зробимо локальну змінну тут:
 static unsigned long lastMQTTsend = 0;
+static StaticJsonDocument<512> discDoc;
 
 void mqttConnect()
 {
@@ -84,13 +85,17 @@ static void mqttSendRaw(const String &topic, const String &payload, bool retain)
   delay(500);
 }
 
-void mqttTestPublish()
+void mqttPublishDiscovery(const String &topic, HaDiscoveryBuilder builder)
 {
-  String topic = "car/test";
-  String payload = "hello-from-car";
+  discDoc.clear();
+  JsonObject root = discDoc.to<JsonObject>();
 
-  Serial.println(">> MQTT TEST PUBLISH");
-  mqttSendRaw(topic, payload, false);
+  builder(root); // користувацький заповнювач
+
+  String payload;
+  serializeJson(discDoc, payload);
+
+  mqttSendRaw(topic, payload, true); // discovery завжди з retain
 }
 
 void mqttSendSignal(int rssi)
@@ -103,4 +108,22 @@ void mqttSendSignal(int rssi)
                    ",\"dbm\":" + String(dbm) + "}";
 
   mqttSendRaw("car/telemetry", payload, false);
+}
+
+void mqttPublishSignalDiscovery()
+{
+  const char *discTopic = "homeassistant/sensor/car_signal/config";
+  mqttPublishDiscovery(discTopic, [](JsonObject &root)
+                       {
+    root["name"]        = "Modem Signal";
+    root["state_topic"] = "car/telemetry";
+    root["unit_of_measurement"] = "dBm";
+    root["value_template"]      = "{{ value_json.dbm }}";
+    root["unique_id"]   = "modem_signal";
+
+    JsonObject dev = root["device"].to<JsonObject>();
+    dev["identifiers"][0] = "car_info";
+    dev["name"]           = "Car Info";
+    dev["model"]          = "ESP32-S3 + A7670E + ELM327";
+    dev["manufacturer"]   = "DEREN"; });
 }

@@ -1,6 +1,11 @@
 #pragma once
-#include <Arduino.h>
+#include "config.h"
 
 void mqttConnect();
-void mqttTestPublish();
 void mqttSendSignal(int rssi);
+
+// discovery helper
+using HaDiscoveryBuilder = void (*)(JsonObject &);
+
+void mqttPublishDiscovery(const String &topic, HaDiscoveryBuilder builder);
+void mqttPublishSignalDiscovery();

@@ -77,7 +77,7 @@ void setup()
   // MQTT
   mqttConnect();
   delay(2000);
-  mqttTestPublish();
+  mqttPublishSignalDiscovery();
   pinMode(BTN_PIN, INPUT_PULLUP); // кнопка на землю
 }
 
