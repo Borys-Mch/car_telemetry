@@ -14,4 +14,4 @@ static constexpr const char *MQTT_CLIENT = "car-info";
 static constexpr const char *MQTT_CMD_TOPIC = "car/cmd"; // HA публікує сюди "open_gate"
 
 // Номер шлагбауму
-static constexpr const char *BARRIER_NUM = "+380690000000";
+static constexpr const char *BARRIER_NUMBER = "+380690000000";

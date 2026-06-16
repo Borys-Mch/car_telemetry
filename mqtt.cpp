@@ -84,7 +84,6 @@ static void mqttSendRaw(const String &topic, const String &payload, bool retain)
   delay(500);
 }
 
-// одна тестова публікація
 void mqttTestPublish()
 {
   String topic = "car/test";
@@ -92,4 +91,16 @@ void mqttTestPublish()
 
   Serial.println(">> MQTT TEST PUBLISH");
   mqttSendRaw(topic, payload, false);
+}
+
+void mqttSendSignal(int rssi)
+{
+  if (rssi == 99)
+    return; // невідомий рівень
+
+  int dbm = -113 + (rssi * 2);
+  String payload = "{\"rssi\":" + String(rssi) +
+                   ",\"dbm\":" + String(dbm) + "}";
+
+  mqttSendRaw("car/telemetry", payload, false);
 }
