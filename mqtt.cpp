@@ -110,6 +110,12 @@ void mqttSendSignal(int rssi)
   mqttSendRaw("car/telemetry", payload, false);
 }
 
+void mqttSendCallStatus(const String &status)
+{
+  String payload = "{\"call\":\"" + status + "\"}";
+  mqttSendRaw("home/car/status", payload, true); // retain, щоб HA завжди бачила останній стан
+}
+
 void mqttPublishSignalDiscovery()
 {
   const char *discTopic = "homeassistant/sensor/car_signal/config";
@@ -126,4 +132,59 @@ void mqttPublishSignalDiscovery()
     dev["name"]           = "Car Info";
     dev["model"]          = "ESP32-S3 + A7670E + ELM327";
     dev["manufacturer"]   = "DEREN"; });
+}
+
+void mqttPublishCallStatusDiscovery()
+{
+  const char *discTopic = "homeassistant/sensor/car_call_status/config";
+
+  mqttPublishDiscovery(discTopic, [](JsonObject &root)
+                       {
+    root["name"]        = "Car Call Status";
+    root["state_topic"] = "home/car/status";
+    root["value_template"] = "{{ value_json.call }}";
+    root["unique_id"]   = "car_call_status";
+    root["icon"]        = "mdi:phone";
+
+    JsonObject dev = root["device"].to<JsonObject>();
+    dev["identifiers"][0] = "car_info";
+    dev["name"]           = "Car Info"; });
+}
+
+void mqttSendIncomingDiscovery()
+{
+  const char *discTopic = "homeassistant/sensor/car_incoming_call/config";
+
+  mqttPublishDiscovery(discTopic, [](JsonObject &root)
+                       {
+    root["name"]                  = "Incoming Call";
+    root["state_topic"]           = "home/car/incoming";
+    root["value_template"]        = "{{ value_json.number }}";
+    root["json_attributes_topic"] = "home/car/incoming";
+    root["unique_id"]             = "car_incoming_call";
+    root["icon"]                  = "mdi:phone-incoming";
+
+    JsonObject dev = root["device"].to<JsonObject>();
+    dev["identifiers"][0] = "car_info";
+    dev["name"]           = "Car Info"; });
+}
+
+void mqttSendIncomingCall(const String &number)
+{
+  String payload = "{";
+  payload += "\"number\":\"" + number + "\",";
+  payload += "\"state\":\"ringing\"";
+  payload += "}";
+
+  mqttSendRaw("home/car/incoming", payload, true);
+}
+
+void mqttClearIncomingCall()
+{
+  String payload = "{";
+  payload += "\"number\":\"\",";
+  payload += "\"state\":\"idle\"";
+  payload += "}";
+
+  mqttSendRaw("home/car/incoming", payload, true);
 }

@@ -38,10 +38,12 @@ void startBarrierCall()
   }
 
   Serial.println("[CALL] Старт дзвінка на шлагбаум...");
-  GSM.printf("ATD%s;\r\n", BARRIER_NUMBER); // номер з secrets.h
+  GSM.printf("ATD%s;\r\n", BARRIER_NUMBER);
 
   callState = CallState::Calling;
   callStartMs = millis();
+
+  mqttSendCallStatus("calling");
 }
 
 void barrierCallLoop()
@@ -52,6 +54,7 @@ void barrierCallLoop()
     Serial.println("[CALL] Завершення дзвінка");
     GSM.println("AT+CHUP");
     callState = CallState::Idle;
+    mqttSendCallStatus("idle");
   }
 }
 
@@ -78,6 +81,11 @@ void setup()
   mqttConnect();
   delay(2000);
   mqttPublishSignalDiscovery();
+  delay(500);
+  mqttPublishCallStatusDiscovery();
+  delay(500);
+  mqttSendIncomingDiscovery();
+
   pinMode(BTN_PIN, INPUT_PULLUP); // кнопка на землю
 }
 
@@ -97,6 +105,41 @@ void loop()
         int comma = line.indexOf(',');
         int rssi = line.substring(6, comma).toInt();
         mqttSendSignal(rssi);
+      }
+
+      if (line.indexOf("NO CARRIER") != -1)
+      {
+        Serial.println("[CALL] NO CARRIER -> idle");
+        callState = CallState::Idle;
+        mqttSendCallStatus("idle");
+      }
+
+      if (line.indexOf("VOICE CALL: END") != -1)
+      {
+        callState = CallState::Idle;
+        mqttSendCallStatus("idle");
+      }
+
+      // вхідний дзвінок
+      if (line.startsWith("+CLIP:"))
+      {
+        int firstQuote = line.indexOf('\"');
+        int secondQuote = line.indexOf('\"', firstQuote + 1);
+
+        if (firstQuote != -1 && secondQuote != -1 && secondQuote > firstQuote + 1)
+        {
+          String number = line.substring(firstQuote + 1, secondQuote);
+          Serial.println("Incoming: " + number);
+          mqttSendIncomingCall(number);
+        }
+      }
+
+      if (line.indexOf("NO CARRIER") != -1)
+      {
+        Serial.println("[CALL] NO CARRIER -> idle");
+        callState = CallState::Idle;
+        mqttSendCallStatus("idle");
+        mqttClearIncomingCall();
       }
 
       line = "";
