@@ -1,13 +1,17 @@
 #include "modem.h"
 #include "secrets.h"
 
-#define GSM_RX 18
-#define GSM_TX 17
-#define GSM_BAUD 115200
-
 HardwareSerial GSM(2);
 
-static void flushGSM()
+// Локальні змінні, які раніше були глобальними в .ino
+static String line; // поки що можна й не використовувати, але лишимо якщо треба буде
+
+void sendAT(const char *cmd)
+{
+  GSM.println(cmd);
+}
+
+void flushGSM()
 {
   while (GSM.available())
   {
@@ -15,7 +19,7 @@ static void flushGSM()
   }
 }
 
-bool waitForResponse(const char *ok, const char *err, uint32_t timeout)
+static bool waitForResponse(const char *ok, const char *err = "ERROR", uint32_t timeout = 2000)
 {
   String resp = "";
   uint32_t start = millis();
@@ -28,12 +32,13 @@ bool waitForResponse(const char *ok, const char *err, uint32_t timeout)
       resp += c;
       Serial.write(c);
     }
+
     if (resp.indexOf(ok) != -1)
       return true;
     if (err && resp.indexOf(err) != -1)
       return false;
-    delay(1);
   }
+
   return false;
 }
 
@@ -49,6 +54,7 @@ bool sendATWait(const char *cmd, const char *ok, uint32_t timeout)
 bool waitForAT(uint32_t totalTimeout)
 {
   uint32_t start = millis();
+
   while (millis() - start < totalTimeout)
   {
     if (sendATWait("AT", "OK", 1000))
@@ -61,6 +67,7 @@ bool waitForAT(uint32_t totalTimeout)
 bool waitForSIM(uint32_t totalTimeout)
 {
   uint32_t start = millis();
+
   while (millis() - start < totalTimeout)
   {
     flushGSM();
@@ -69,6 +76,7 @@ bool waitForSIM(uint32_t totalTimeout)
 
     String resp = "";
     uint32_t t = millis();
+
     while (millis() - t < 1500)
     {
       while (GSM.available())
@@ -78,16 +86,19 @@ bool waitForSIM(uint32_t totalTimeout)
         Serial.write(c);
       }
     }
+
     if (resp.indexOf("READY") != -1)
       return true;
     delay(1000);
   }
+
   return false;
 }
 
 bool waitForNetwork(uint32_t totalTimeout)
 {
   uint32_t start = millis();
+
   while (millis() - start < totalTimeout)
   {
     flushGSM();
@@ -96,6 +107,7 @@ bool waitForNetwork(uint32_t totalTimeout)
 
     String resp = "";
     uint32_t t = millis();
+
     while (millis() - t < 1500)
     {
       while (GSM.available())
@@ -105,43 +117,44 @@ bool waitForNetwork(uint32_t totalTimeout)
         Serial.write(c);
       }
     }
+
     if (resp.indexOf("+CREG: 0,1") != -1 ||
         resp.indexOf("+CREG: 0,5") != -1)
       return true;
 
     delay(1500);
   }
+
   return false;
 }
 
+// Головна функція, яку викликає .ino
 bool modemInit()
 {
-  Serial.begin(GSM_BAUD);
-  delay(300);
-  Serial.println();
-  Serial.println("=== Car Telemetry — MODEM init ===");
-
   GSM.begin(GSM_BAUD, SERIAL_8N1, GSM_RX, GSM_TX);
+
+  Serial.println("Waiting for modem autostart...");
   delay(3000);
 
-  if (!waitForAT())
+  if (!waitForAT(30000))
   {
     Serial.println("ERROR: modem does not answer AT");
     return false;
   }
+
   Serial.println("MODEM OK");
 
-  sendATWait("ATE0");
-  sendATWait("AT+CMEE=2");
+  sendATWait("ATE0", "OK", 2000);
+  sendATWait("AT+CMEE=2", "OK", 2000);
 
-  if (!waitForSIM())
+  if (!waitForSIM(20000))
   {
     Serial.println("ERROR: SIM not ready");
     return false;
   }
   Serial.println("SIM READY");
 
-  if (!waitForNetwork())
+  if (!waitForNetwork(45000))
   {
     Serial.println("ERROR: network not registered");
     return false;
