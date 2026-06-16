@@ -7,9 +7,20 @@ StaticJsonDocument<256> mqttDoc;
 const char *TOPIC_AVAIL = "car/availability";
 const char *TOPIC_STATUS = "car/status";
 const char *TOPIC_SIGNAL = "car/signal";
+const char *TOPIC_BARRIER_CMD = "car/cmd/barrier";
 
 static const char *DISCOVERY_PREFIX = "homeassistant";
 static const char *DEVICE_ID = "car_telemetry";
+
+extern void barrierCallStart();
+
+void mqttHandleIncoming(const String &topic, const String &payload)
+{
+  if (topic == TOPIC_BARRIER_CMD && payload == "CALL")
+  {
+    barrierCallStart();
+  }
+}
 
 static void addDeviceBlock(JsonObject &dev)
 {
@@ -107,6 +118,25 @@ static void publishStatusDiscovery()
     addDeviceBlock(dev); }, true);
 }
 
+static void publishBarrierButtonDiscovery()
+{
+  String topic = String(DISCOVERY_PREFIX) +
+                 "/button/" +
+                 DEVICE_ID +
+                 "_barrier_call/config";
+
+  mqttPublishJson(topic, [](JsonObject &root)
+                  {
+    root["name"]          = "Barrier Call";
+    root["unique_id"]     = String(DEVICE_ID) + "_barrier_call";
+    root["command_topic"] = TOPIC_BARRIER_CMD;
+    root["payload_press"] = "CALL";
+    root["icon"]          = "mdi:phone";
+
+    JsonObject dev = root["device"].to<JsonObject>();
+    addDeviceBlock(dev); }, true);
+}
+
 void mqttSetAvailabilityOnline()
 {
   mqttSend(TOPIC_AVAIL, "online", true);
@@ -130,6 +160,7 @@ bool mqttInit()
   // нове:
   publishSignalDiscovery();
   publishStatusDiscovery();
+  publishBarrierButtonDiscovery();
 
   return true;
 }

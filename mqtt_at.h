@@ -7,6 +7,7 @@ extern StaticJsonDocument<256> mqttDoc;
 extern const char *TOPIC_AVAIL;
 extern const char *TOPIC_STATUS;
 extern const char *TOPIC_SIGNAL;
+extern const char *TOPIC_BARRIER_CMD;
 
 bool mqttInit();
 void mqttSend(const String &topic, const String &payload, bool retain);
@@ -22,3 +23,5 @@ void mqttPublishJson(const String &topic, Builder builder, bool retain = false)
   serializeJson(mqttDoc, payload);
   mqttSend(topic, payload, retain);
 }
+
+void mqttHandleIncoming(const String &topic, const String &payload);
