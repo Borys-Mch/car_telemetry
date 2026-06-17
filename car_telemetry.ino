@@ -10,6 +10,7 @@
 #include "secrets.h"
 #include "modem.h"
 #include "mqtt.h"
+#include "gps.h"
 
 String line;
 unsigned long lastSignalReq = 0;
@@ -37,6 +38,8 @@ enum class MqttRxState
 };
 static MqttRxState mqttRxState = MqttRxState::Idle;
 static String mqttRxTopic;
+
+unsigned long lastGpsReq = 0;
 
 void startBarrierCall()
 {
@@ -74,6 +77,8 @@ void setup()
     Serial.println("MODEM INIT OK");
   }
 
+  sendATWait("AT+CGNSSPWR=1", "OK", 3000);
+
   // MQTT
   mqttConnect();
   delay(2000);
@@ -88,6 +93,8 @@ void setup()
   mqttPublishGateButtonDiscovery();
   delay(500);
   mqttPublishHangupButtonDiscovery();
+  delay(500);
+  mqttSendDiscoveryGps();
 
   pinMode(BTN_PIN, INPUT_PULLUP); // кнопка на землю
 }
@@ -121,6 +128,76 @@ void loop()
       {
         callState = CallState::Idle;
         mqttSendCallStatus("idle");
+      }
+
+      // GPS
+      if (line.startsWith("+CGNSSINFO:"))
+      {
+        // якщо модуль ще не зафіксувався, формат буде ",,,,,,,," [web:97][web:100]
+        if (line.indexOf(",,,,") != -1)
+        {
+          Serial.println("[GPS] No fix yet");
+        }
+        else
+        {
+          // Розбиваємо по комах
+          int idx[20];
+          int count = 0;
+          for (int i = 0; i < line.length() && count < 20; i++)
+          {
+            if (line[i] == ',')
+            {
+              idx[count++] = i;
+            }
+          }
+
+          if (count >= 8)
+          {
+            // коми нумеруємо з 0:
+            // 0: після "3"
+            // 1: після "17"
+            // 2: після "" (порожнє)
+            // 3: після "08" (GLONASS)
+            // 4: після "08" (GALILEO)
+            // 5: після "50.4232674" (lat)
+            // 6: після "N"
+            // 7: після "30.5303669" (lon)
+            // 8: після "E"
+
+            String latStr = line.substring(idx[4] + 1, idx[5]); // між 4 і 5
+            String latDir = line.substring(idx[5] + 1, idx[6]);
+            String lonStr = line.substring(idx[6] + 1, idx[7]);
+            String lonDir = line.substring(idx[7] + 1, idx[8]);
+
+            latStr.trim();
+            lonStr.trim();
+            latDir.trim();
+            lonDir.trim();
+
+            float latDeg = latStr.toFloat(); // вже десяткові градуси
+            float lonDeg = lonStr.toFloat();
+
+            if (latDir == "S")
+              latDeg = -latDeg;
+            if (lonDir == "W")
+              lonDeg = -lonDeg;
+
+            if (isValidUkraineRange(latDeg, lonDeg))
+            {
+              Serial.print("[GPS] Fix: ");
+              Serial.print(latDeg, 6);
+              Serial.print(", ");
+              Serial.println(lonDeg, 6);
+
+              int sats = line.substring(idx[0] + 1, idx[1]).toInt(); // поле GPS‑SVs = 17
+              mqttSendGps(latDeg, lonDeg, sats);
+            }
+            else
+            {
+              Serial.println("[GPS] Fix out of UA range, ignored");
+            }
+          }
+        }
       }
 
       // вхідний дзвінок
@@ -224,5 +301,11 @@ void loop()
     {
       startBarrierCall();
     }
+  }
+
+  if (millis() - lastGpsReq > 10000UL)
+  { // раз на 10 сек
+    lastGpsReq = millis();
+    GSM.println("AT+CGNSSINFO");
   }
 }

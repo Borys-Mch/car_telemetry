@@ -19,4 +19,6 @@ void mqttSendIncomingCall(const String &number);
 void mqttClearIncomingCall();
 void mqttPublishGateButtonDiscovery();
 void mqttPublishHangupButtonDiscovery();
+void mqttSendGps(float lat, float lon, int sats);
+void mqttSendDiscoveryGps();
 void mqttSubscribeCmd();

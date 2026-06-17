@@ -223,6 +223,34 @@ void mqttPublishHangupButtonDiscovery()
     dev["name"]           = "Car Info"; });
 }
 
+void mqttSendGps(float lat, float lon, int sats)
+{
+  String payload = "{";
+  payload += "\"latitude\":" + String(lat, 6) + ",";
+  payload += "\"longitude\":" + String(lon, 6) + ",";
+  payload += "\"sat\":" + String(sats);
+  payload += "}";
+
+  mqttSendRaw("car/gps", payload, true);
+}
+
+void mqttSendDiscoveryGps()
+{
+  String payload = "{";
+  payload += "\"name\":\"Car GPS\"";
+  payload += ",\"state_topic\":\"car/gps\"";
+  payload += ",\"json_attributes_topic\":\"car/gps\"";
+  payload += ",\"unique_id\":\"car_gpstracker\"";
+  payload += ",\"source_type\":\"gps\"";
+  payload += ",\"device\":{";
+  payload += "\"identifiers\":[\"car_info\"],";
+  payload += "\"name\":\"Car Info\"";
+  payload += "}";
+  payload += "}";
+
+  mqttSendRaw("homeassistant/device_tracker/cargps/config", payload, true);
+}
+
 void mqttSubscribeCmd()
 {
   const char *topic = "car/cmd";
