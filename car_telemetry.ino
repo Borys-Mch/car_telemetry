@@ -55,18 +55,6 @@ void startBarrierCall()
   mqttSendCallStatus("calling");
 }
 
-void barrierCallLoop()
-{
-  if (callState == CallState::Calling &&
-      millis() - callStartMs > CALL_DURATION_MS)
-  {
-    Serial.println("[CALL] Завершення дзвінка");
-    GSM.println("AT+CHUP");
-    callState = CallState::Idle;
-    mqttSendCallStatus("idle");
-  }
-}
-
 void setup()
 {
   Serial.begin(GSM_BAUD);
@@ -98,6 +86,8 @@ void setup()
   mqttSendIncomingDiscovery();
   delay(500);
   mqttPublishGateButtonDiscovery();
+  delay(500);
+  mqttPublishHangupButtonDiscovery();
 
   pinMode(BTN_PIN, INPUT_PULLUP); // кнопка на землю
 }
@@ -184,9 +174,20 @@ void loop()
           String payload = line;
           Serial.println("[MQTT RX] " + mqttRxTopic + " : " + payload);
 
-          if (mqttRxTopic == "car/cmd" && payload == "gate")
+          if (mqttRxTopic == "car/cmd")
           {
-            startBarrierCall();
+            if (payload == "gate")
+            {
+              startBarrierCall();
+            }
+            else if (payload == "hangup")
+            {
+              Serial.println("[CALL] Hangup from HA");
+              GSM.println("AT+CHUP");
+              callState = CallState::Idle;
+              mqttSendCallStatus("idle");
+              mqttClearIncomingCall();
+            }
           }
 
           mqttRxState = MqttRxState::Idle;
@@ -224,6 +225,4 @@ void loop()
       startBarrierCall();
     }
   }
-
-  barrierCallLoop();
 }

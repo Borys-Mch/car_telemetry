@@ -206,6 +206,23 @@ void mqttPublishGateButtonDiscovery()
     dev["name"]           = "Car Info"; });
 }
 
+void mqttPublishHangupButtonDiscovery()
+{
+  const char *discTopic = "homeassistant/button/car_call_end/config";
+
+  mqttPublishDiscovery(discTopic, [](JsonObject &root)
+                       {
+    root["name"]          = "End Call";
+    root["command_topic"] = "car/cmd";
+    root["payload_press"] = "hangup";
+    root["unique_id"]     = "car_call_end_btn";
+    root["icon"]          = "mdi:phone-hangup";
+
+    JsonObject dev = root["device"].to<JsonObject>();
+    dev["identifiers"][0] = "car_info";
+    dev["name"]           = "Car Info"; });
+}
+
 void mqttSubscribeCmd()
 {
   const char *topic = "car/cmd";
