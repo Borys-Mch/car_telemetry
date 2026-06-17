@@ -113,7 +113,7 @@ void mqttSendSignal(int rssi)
 void mqttSendCallStatus(const String &status)
 {
   String payload = "{\"call\":\"" + status + "\"}";
-  mqttSendRaw("home/car/status", payload, true); // retain, щоб HA завжди бачила останній стан
+  mqttSendRaw("car/status", payload, true); // retain, щоб HA завжди бачила останній стан
 }
 
 void mqttPublishSignalDiscovery()
@@ -141,7 +141,7 @@ void mqttPublishCallStatusDiscovery()
   mqttPublishDiscovery(discTopic, [](JsonObject &root)
                        {
     root["name"]        = "Car Call Status";
-    root["state_topic"] = "home/car/status";
+    root["state_topic"] = "car/status";
     root["value_template"] = "{{ value_json.call }}";
     root["unique_id"]   = "car_call_status";
     root["icon"]        = "mdi:phone";
@@ -158,9 +158,9 @@ void mqttSendIncomingDiscovery()
   mqttPublishDiscovery(discTopic, [](JsonObject &root)
                        {
     root["name"]                  = "Incoming Call";
-    root["state_topic"]           = "home/car/incoming";
+    root["state_topic"]           = "car/incoming";
     root["value_template"]        = "{{ value_json.number }}";
-    root["json_attributes_topic"] = "home/car/incoming";
+    root["json_attributes_topic"] = "car/incoming";
     root["unique_id"]             = "car_incoming_call";
     root["icon"]                  = "mdi:phone-incoming";
 
@@ -176,7 +176,7 @@ void mqttSendIncomingCall(const String &number)
   payload += "\"state\":\"ringing\"";
   payload += "}";
 
-  mqttSendRaw("home/car/incoming", payload, true);
+  mqttSendRaw("car/incoming", payload, true);
 }
 
 void mqttClearIncomingCall()
@@ -186,5 +186,33 @@ void mqttClearIncomingCall()
   payload += "\"state\":\"idle\"";
   payload += "}";
 
-  mqttSendRaw("home/car/incoming", payload, true);
+  mqttSendRaw("car/incoming", payload, true);
+}
+
+void mqttPublishGateButtonDiscovery()
+{
+  const char *discTopic = "homeassistant/button/car_gate/config";
+
+  mqttPublishDiscovery(discTopic, [](JsonObject &root)
+                       {
+    root["name"]          = "Gate Open";
+    root["command_topic"] = "car/cmd";
+    root["payload_press"] = "gate";
+    root["unique_id"]     = "car_gate_btn";
+    root["icon"]          = "mdi:boom-gate-outline";
+
+    JsonObject dev = root["device"].to<JsonObject>();
+    dev["identifiers"][0] = "car_info";
+    dev["name"]           = "Car Info"; });
+}
+
+void mqttSubscribeCmd()
+{
+  const char *topic = "car/cmd";
+
+  // Формуємо AT+CMQTTSUB
+  GSM.printf("AT+CMQTTSUB=0,%d,1\r\n", strlen(topic));
+  delay(100);
+  GSM.print(topic);
+  delay(100);
 }

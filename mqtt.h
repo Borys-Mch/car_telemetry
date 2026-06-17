@@ -17,3 +17,5 @@ void mqttPublishCallStatusDiscovery();
 void mqttSendIncomingDiscovery();
 void mqttSendIncomingCall(const String &number);
 void mqttClearIncomingCall();
+void mqttPublishGateButtonDiscovery();
+void mqttSubscribeCmd();

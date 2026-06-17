@@ -29,6 +29,15 @@ static CallState callState = CallState::Idle;
 static unsigned long callStartMs = 0;
 static const unsigned long CALL_DURATION_MS = 8000;
 
+enum class MqttRxState
+{
+  Idle,
+  ExpectTopic,
+  ExpectPayload
+};
+static MqttRxState mqttRxState = MqttRxState::Idle;
+static String mqttRxTopic;
+
 void startBarrierCall()
 {
   if (callState == CallState::Calling)
@@ -80,11 +89,15 @@ void setup()
   // MQTT
   mqttConnect();
   delay(2000);
+  mqttSubscribeCmd();
+  delay(2000);
   mqttPublishSignalDiscovery();
   delay(500);
   mqttPublishCallStatusDiscovery();
   delay(500);
   mqttSendIncomingDiscovery();
+  delay(500);
+  mqttPublishGateButtonDiscovery();
 
   pinMode(BTN_PIN, INPUT_PULLUP); // кнопка на землю
 }
@@ -140,6 +153,44 @@ void loop()
         callState = CallState::Idle;
         mqttSendCallStatus("idle");
         mqttClearIncomingCall();
+      }
+
+      // 1) заголовок про те, що зараз прийде topic
+      if (line.startsWith("+CMQTTRXTOPIC:"))
+      {
+        mqttRxState = MqttRxState::ExpectTopic;
+        mqttRxTopic = "";
+      }
+
+      // 2) наступний рядок після +CMQTTRXTOPIC — це сам топік
+      else if (mqttRxState == MqttRxState::ExpectTopic)
+      {
+        mqttRxTopic = line; // тут щось типу "home/car/cmd"
+        mqttRxState = MqttRxState::ExpectPayload;
+      }
+
+      // 3) після цього SIMCOM дасть +CMQTTRXPAYLOAD:..., а потім рядок з payload.
+      // Ти вже читаєш всі рядки, тому можна просто шукати "gate" на етапі ExpectPayload.
+      else if (mqttRxState == MqttRxState::ExpectPayload)
+      {
+        // цей рядок може бути +CMQTTRXPAYLOAD:..., чекаємо наступний з реальним payload
+        if (line.startsWith("+CMQTTRXPAYLOAD:"))
+        {
+          // нічого не робимо, чекаємо наступний рядок
+        }
+        else
+        {
+          // це вже сам payload
+          String payload = line;
+          Serial.println("[MQTT RX] " + mqttRxTopic + " : " + payload);
+
+          if (mqttRxTopic == "car/cmd" && payload == "gate")
+          {
+            startBarrierCall();
+          }
+
+          mqttRxState = MqttRxState::Idle;
+        }
       }
 
       line = "";
