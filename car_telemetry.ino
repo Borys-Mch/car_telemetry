@@ -66,11 +66,9 @@ void setup()
   Serial.println();
   Serial.println("=== ESP32 boot ===");
 
-  // Ініціалізація модема (AT, SIM, мережа)
   if (!modemInit())
   {
     Serial.println("MODEM INIT FAILED");
-    // тут можна або зависнути, або перезапускати ESP, але поки що — просто повідомлення
   }
   else
   {
@@ -79,28 +77,37 @@ void setup()
 
   sendATWait("AT+CGNSSPWR=1", "OK", 3000);
 
-  // MQTT
+  // MQTT: перше підключення
   mqttConnect();
-  delay(2000);
-  mqttSubscribeCmd();
-  delay(2000);
-  mqttPublishSignalDiscovery();
-  delay(500);
-  mqttPublishCallStatusDiscovery();
-  delay(500);
-  mqttSendIncomingDiscovery();
-  delay(500);
-  mqttPublishGateButtonDiscovery();
-  delay(500);
-  mqttPublishHangupButtonDiscovery();
-  delay(500);
-  mqttSendDiscoveryGps();
 
-  pinMode(BTN_PIN, INPUT_PULLUP); // кнопка на землю
+  if (mqttConnected)
+  {
+    delay(1500);
+    mqttSubscribeCmd();
+    delay(1000);
+    mqttPublishSignalDiscovery();
+    delay(500);
+    mqttPublishCallStatusDiscovery();
+    delay(500);
+    mqttSendIncomingDiscovery();
+    delay(500);
+    mqttPublishGateButtonDiscovery();
+    delay(500);
+    mqttPublishHangupButtonDiscovery();
+    delay(500);
+    mqttSendDiscoveryGps();
+  }
+  else
+  {
+    Serial.println("[SETUP] MQTT not connected, watchdog will retry");
+  }
+
+  pinMode(BTN_PIN, INPUT_PULLUP);
 }
 
 void loop()
 {
+  // ── читаємо GSM UART ──────────────────────────────────────────────────────
   while (GSM.available())
   {
     char c = GSM.read();
@@ -110,6 +117,10 @@ void loop()
     {
       line.trim();
 
+      // передаємо кожен рядок URC-обробнику MQTT
+      mqttHandleURC(line);
+
+      // ── CSQ ──────────────────────────────────────────────────────────────
       if (line.startsWith("+CSQ:"))
       {
         int comma = line.indexOf(',');
@@ -117,11 +128,13 @@ void loop()
         mqttSendSignal(rssi);
       }
 
+      // ── завершення дзвінка ────────────────────────────────────────────────
       if (line.indexOf("NO CARRIER") != -1)
       {
         Serial.println("[CALL] NO CARRIER -> idle");
         callState = CallState::Idle;
         mqttSendCallStatus("idle");
+        mqttClearIncomingCall();
       }
 
       if (line.indexOf("VOICE CALL: END") != -1)
@@ -130,41 +143,26 @@ void loop()
         mqttSendCallStatus("idle");
       }
 
-      // GPS
+      // ── GPS ───────────────────────────────────────────────────────────────
       if (line.startsWith("+CGNSSINFO:"))
       {
-        // якщо модуль ще не зафіксувався, формат буде ",,,,,,,," [web:97][web:100]
         if (line.indexOf(",,,,") != -1)
         {
           Serial.println("[GPS] No fix yet");
         }
         else
         {
-          // Розбиваємо по комах
           int idx[20];
           int count = 0;
-          for (int i = 0; i < line.length() && count < 20; i++)
+          for (int i = 0; i < (int)line.length() && count < 20; i++)
           {
             if (line[i] == ',')
-            {
               idx[count++] = i;
-            }
           }
 
           if (count >= 8)
           {
-            // коми нумеруємо з 0:
-            // 0: після "3"
-            // 1: після "17"
-            // 2: після "" (порожнє)
-            // 3: після "08" (GLONASS)
-            // 4: після "08" (GALILEO)
-            // 5: після "50.4232674" (lat)
-            // 6: після "N"
-            // 7: після "30.5303669" (lon)
-            // 8: після "E"
-
-            String latStr = line.substring(idx[4] + 1, idx[5]); // між 4 і 5
+            String latStr = line.substring(idx[4] + 1, idx[5]);
             String latDir = line.substring(idx[5] + 1, idx[6]);
             String lonStr = line.substring(idx[6] + 1, idx[7]);
             String lonDir = line.substring(idx[7] + 1, idx[8]);
@@ -174,7 +172,7 @@ void loop()
             latDir.trim();
             lonDir.trim();
 
-            float latDeg = latStr.toFloat(); // вже десяткові градуси
+            float latDeg = latStr.toFloat();
             float lonDeg = lonStr.toFloat();
 
             if (latDir == "S")
@@ -189,7 +187,7 @@ void loop()
               Serial.print(", ");
               Serial.println(lonDeg, 6);
 
-              int sats = line.substring(idx[0] + 1, idx[1]).toInt(); // поле GPS‑SVs = 17
+              int sats = line.substring(idx[0] + 1, idx[1]).toInt();
               mqttSendGps(latDeg, lonDeg, sats);
             }
             else
@@ -200,7 +198,7 @@ void loop()
         }
       }
 
-      // вхідний дзвінок
+      // ── вхідний дзвінок ───────────────────────────────────────────────────
       if (line.startsWith("+CLIP:"))
       {
         int firstQuote = line.indexOf('\"');
@@ -214,40 +212,25 @@ void loop()
         }
       }
 
-      if (line.indexOf("NO CARRIER") != -1)
-      {
-        Serial.println("[CALL] NO CARRIER -> idle");
-        callState = CallState::Idle;
-        mqttSendCallStatus("idle");
-        mqttClearIncomingCall();
-      }
-
-      // 1) заголовок про те, що зараз прийде topic
+      // ── MQTT RX: topic ────────────────────────────────────────────────────
       if (line.startsWith("+CMQTTRXTOPIC:"))
       {
         mqttRxState = MqttRxState::ExpectTopic;
         mqttRxTopic = "";
       }
-
-      // 2) наступний рядок після +CMQTTRXTOPIC — це сам топік
       else if (mqttRxState == MqttRxState::ExpectTopic)
       {
-        mqttRxTopic = line; // тут щось типу "home/car/cmd"
+        mqttRxTopic = line;
         mqttRxState = MqttRxState::ExpectPayload;
       }
-
-      // 3) після цього SIMCOM дасть +CMQTTRXPAYLOAD:..., а потім рядок з payload.
-      // Ти вже читаєш всі рядки, тому можна просто шукати "gate" на етапі ExpectPayload.
       else if (mqttRxState == MqttRxState::ExpectPayload)
       {
-        // цей рядок може бути +CMQTTRXPAYLOAD:..., чекаємо наступний з реальним payload
         if (line.startsWith("+CMQTTRXPAYLOAD:"))
         {
-          // нічого не робимо, чекаємо наступний рядок
+          // пропускаємо заголовок, чекаємо наступний рядок
         }
         else
         {
-          // це вже сам payload
           String payload = line;
           Serial.println("[MQTT RX] " + mqttRxTopic + " : " + payload);
 
@@ -279,13 +262,21 @@ void loop()
     }
   }
 
+  // ── CSQ запит кожні 10 сек ────────────────────────────────────────────────
   if (millis() - lastSignalReq > 10000UL)
   {
     lastSignalReq = millis();
     GSM.println("AT+CSQ");
   }
 
-  // --- обробка фізичної кнопки ---
+  // ── GPS запит кожні 10 сек ────────────────────────────────────────────────
+  if (millis() - lastGpsReq > 10000UL)
+  {
+    lastGpsReq = millis();
+    GSM.println("AT+CGNSSINFO");
+  }
+
+  // ── фізична кнопка ───────────────────────────────────────────────────────
   int raw = digitalRead(BTN_PIN);
 
   if (raw != lastBtnState)
@@ -296,16 +287,12 @@ void loop()
 
   if ((millis() - lastDebounce) > DEBOUNCE_MS)
   {
-    // активний фронт: перехід з HIGH в LOW (кнопка натиснута)
     if (raw == LOW)
     {
       startBarrierCall();
     }
   }
 
-  if (millis() - lastGpsReq > 10000UL)
-  { // раз на 10 сек
-    lastGpsReq = millis();
-    GSM.println("AT+CGNSSINFO");
-  }
+  // ── MQTT watchdog: перевірка і reconnect ──────────────────────────────────
+  mqttWatchdog();
 }
