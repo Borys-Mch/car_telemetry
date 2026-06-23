@@ -1,20 +1,10 @@
-#define TINY_GSM_MODEM_SIM7600
 #include "secrets.h"
 #include "config.h"
-
-// ==============================================
-// 4. ІНШІ НАЛАШТУВАННЯ
-// ==============================================
-
-const char clientId[] = "test_client";
+#include "mqtt.h"
 
 // ==============================================
 // 5. ІНІЦІАЛІЗАЦІЯ
 // ==============================================
-TinyGsm modem(SerialAT);
-TinyGsmClient client(modem);
-SSLClient sslClient(&client);
-PubSubClient mqttClient(sslClient);
 
 void setup()
 {
@@ -45,44 +35,8 @@ void setup()
   Serial.print("IP: ");
   Serial.println(modem.getLocalIP());
 
-  // Вимкнути перевірку сертифікатів (insecure mode)
-  sslClient.setInsecure();
-
-  // Налаштування MQTT
-  mqttClient.setServer(MQTT_HOST, MQTT_PORT);
-  mqttClient.setCallback(callback);
-
+  initMQTT();
   connectMQTT();
-}
-
-void connectMQTT()
-{
-  Serial.print("Підключення до MQTT...");
-  while (!mqttClient.connected())
-  {
-    if (mqttClient.connect(clientId, MQTT_USER, MQTT_PASS))
-    {
-      Serial.println(" підключено!");
-      mqttClient.subscribe("test/topic");
-    }
-    else
-    {
-      Serial.print(" помилка, код: ");
-      Serial.print(mqttClient.state());
-      Serial.println(" спроба через 5 секунд...");
-      delay(5000);
-    }
-  }
-}
-
-void callback(char *topic, byte *payload, unsigned int length)
-{
-  Serial.print("Повідомлення: ");
-  for (int i = 0; i < length; i++)
-  {
-    Serial.print((char)payload[i]);
-  }
-  Serial.println();
 }
 
 void loop()
