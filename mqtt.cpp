@@ -15,73 +15,39 @@ static unsigned long lastMQTTsend = 0;
 static StaticJsonDocument<512> discDoc;
 
 // ─── внутрішня публікація ─────────────────────────────────────────────────────
-// Повертає true якщо модем відповів "+CMQTTPUB:0,0" (успіх)
-static bool mqttSendRaw(const String &topic, const String &payload, bool retain)
+// Неблокуюча: надсилає AT-команди і виходить.
+// Результат +CMQTTPUB обробляється в mqttHandleURC() з loop().
+static void mqttSendRaw(const String &topic, const String &payload, bool retain)
 {
   if (!mqttConnected)
   {
     Serial.println("[MQTT] Skip send – not connected");
-    return false;
+    return;
   }
 
-  // throttle
+  // throttle: мінімум 1500 мс між publish
   unsigned long now = millis();
   if (now - lastMQTTsend < 1500)
     delay(1500 - (now - lastMQTTsend));
   lastMQTTsend = millis();
 
   GSM.printf("AT+CMQTTTOPIC=0,%d\r\n", topic.length());
-  delay(300);
+  delay(200);
   GSM.print(topic);
-  delay(300);
+  delay(100);
 
   GSM.printf("AT+CMQTTPAYLOAD=0,%d\r\n", payload.length());
-  delay(300);
+  delay(200);
   GSM.print(payload);
-  delay(300);
+  delay(100);
 
   if (retain)
     GSM.println("AT+CMQTTPUB=0,1,60,1");
   else
     GSM.println("AT+CMQTTPUB=0,1,60");
 
-  // чекаємо підтвердження "+CMQTTPUB:0,0" = success
-  // або "+CMQTTPUB:0,<err>" = fail
-  unsigned long t = millis();
-  String resp = "";
-  bool success = false;
-
-  while (millis() - t < 5000)
-  {
-    while (GSM.available())
-    {
-      char c = GSM.read();
-      Serial.write(c);
-      if (c == '\n')
-      {
-        resp.trim();
-        if (resp.startsWith("+CMQTTPUB:0,0"))
-        {
-          success = true;
-          lastSuccessfulPub = millis();
-        }
-        else if (resp.startsWith("+CMQTTPUB:0,") && resp != "+CMQTTPUB:0,0")
-        {
-          Serial.println("[MQTT] Publish error: " + resp);
-          mqttConnected = false; // брокер відхилив — вважаємо з'єднання мертвим
-        }
-        resp = "";
-      }
-      else
-      {
-        resp += c;
-      }
-    }
-    if (success || !mqttConnected)
-      break;
-  }
-
-  return success;
+  // НЕ чекаємо тут — +CMQTTPUB прийде асинхронно і
+  // буде оброблений в mqttHandleURC() → loop()
 }
 
 // ─── connect ──────────────────────────────────────────────────────────────────
@@ -145,10 +111,22 @@ void mqttConnect()
   sendATWait("AT+CMQTTSSLCFG=0,0", "OK", 2000);
 
   // CONNECT
-  char cmd[160];
+  char cmd[256];
   snprintf(cmd, sizeof(cmd),
            "AT+CMQTTCONNECT=0,\"tcp://%s:%d\",60,1,\"%s\",\"%s\"",
            MQTT_HOST, MQTT_PORT, MQTT_USER, MQTT_PASS);
+
+  // LWT topic
+  GSM.printf("AT+CMQTTWILLTOPIC=0,%d\r\n", strlen("car/availability"));
+  delay(200);
+  GSM.print("car/availability");
+  delay(200);
+
+  // LWT payload
+  GSM.printf("AT+CMQTTWILLMSG=0,%d,1\r\n", strlen("offline")); // 1 = QoS1
+  delay(200);
+  GSM.print("offline");
+  delay(200);
 
   Serial.println("[MQTT] >> CONNECT");
   GSM.println(cmd);
@@ -200,6 +178,7 @@ void mqttConnect()
     mqttConnected = true;
     lastSuccessfulPub = millis();
     Serial.println("[MQTT] Connected OK");
+    mqttSendRaw("car/availability", "online", true);
   }
   else
   {
@@ -270,15 +249,35 @@ void mqttWatchdog()
 // Викликати з loop() для кожного отриманого рядка від GSM
 void mqttHandleURC(const String &line)
 {
-  // Модем повідомляє про втрату з'єднання
+  // ── підтвердження publish ────────────────────────────────────────────────
+  if (line.startsWith("+CMQTTPUB:"))
+  {
+    // формат: +CMQTTPUB: 0,0  або  +CMQTTPUB:0,0
+    int comma = line.lastIndexOf(',');
+    if (comma != -1)
+    {
+      int code = line.substring(comma + 1).toInt();
+      if (code == 0)
+      {
+        lastSuccessfulPub = millis();
+        // Serial.println("[MQTT] Pub OK");  // розкоментуй для дебагу
+      }
+      else
+      {
+        Serial.println("[MQTT] Pub error code=" + String(code));
+        mqttConnected = false;
+      }
+    }
+    return;
+  }
+
+  // ── втрата з'єднання ────────────────────────────────────────────────────
   if (line.startsWith("+CMQTTCONNLOST") ||
       line.startsWith("+CMQTTNONET") ||
-      line.startsWith("+CMQTTRECV") || // деякі fw надсилають це при закритті
       (line.startsWith("+CMQTTERROR") && mqttConnected))
   {
     Serial.println("[MQTT] URC: connection lost -> " + line);
     mqttConnected = false;
-    // watchdog підхопить на наступній ітерації
   }
 }
 
@@ -321,6 +320,9 @@ void mqttPublishSignalDiscovery()
     root["unit_of_measurement"] = "dBm";
     root["value_template"]      = "{{ value_json.dbm }}";
     root["unique_id"]           = "modem_signal";
+    root["availability_topic"]    = "car/availability";
+    root["payload_available"]     = "online";
+    root["payload_not_available"] = "offline";
 
     JsonObject dev = root["device"].to<JsonObject>();
     dev["identifiers"][0] = "car_info";
@@ -339,6 +341,9 @@ void mqttPublishCallStatusDiscovery()
     root["value_template"] = "{{ value_json.call }}";
     root["unique_id"]      = "car_call_status";
     root["icon"]           = "mdi:phone";
+    root["availability_topic"]    = "car/availability";
+    root["payload_available"]     = "online";
+    root["payload_not_available"] = "offline";
 
     JsonObject dev = root["device"].to<JsonObject>();
     dev["identifiers"][0] = "car_info";
@@ -356,6 +361,9 @@ void mqttSendIncomingDiscovery()
     root["json_attributes_topic"] = "car/incoming";
     root["unique_id"]             = "car_incoming_call";
     root["icon"]                  = "mdi:phone-incoming";
+    root["availability_topic"]    = "car/availability";
+    root["payload_available"]     = "online";
+    root["payload_not_available"] = "offline";
 
     JsonObject dev = root["device"].to<JsonObject>();
     dev["identifiers"][0] = "car_info";
@@ -384,6 +392,9 @@ void mqttPublishGateButtonDiscovery()
     root["payload_press"] = "gate";
     root["unique_id"]     = "car_gate_btn";
     root["icon"]          = "mdi:boom-gate-outline";
+    root["availability_topic"]    = "car/availability";
+    root["payload_available"]     = "online";
+    root["payload_not_available"] = "offline";
 
     JsonObject dev = root["device"].to<JsonObject>();
     dev["identifiers"][0] = "car_info";
@@ -400,6 +411,9 @@ void mqttPublishHangupButtonDiscovery()
     root["payload_press"] = "hangup";
     root["unique_id"]     = "car_call_end_btn";
     root["icon"]          = "mdi:phone-hangup";
+    root["availability_topic"]    = "car/availability";
+    root["payload_available"]     = "online";
+    root["payload_not_available"] = "offline";
 
     JsonObject dev = root["device"].to<JsonObject>();
     dev["identifiers"][0] = "car_info";
