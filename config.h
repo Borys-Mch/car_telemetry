@@ -7,6 +7,7 @@
 #include <TinyGsmClient.h>
 #include <SSLClient.h>
 #include <PubSubClient.h>
+#include <esp_task_wdt.h>
 
 // ==============================================
 // 3. НАЛАШТУВАННЯ UART ДЛЯ ESP32
@@ -17,3 +18,4 @@
 #define GSM_BAUD 115200
 #define PWK_PIN 4
 #define BTN_PIN 5
+#define BTN_DEBOUNCE_MS 50

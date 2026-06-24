@@ -4,4 +4,11 @@
 #include "modem.h"
 
 bool initMQTT();
-void connectMQTT();
+bool connectToMQTT();
+void mqttLoop();
+void publishDiscovery();
+void publishSignalSensor();
+void publishIncomingCallSensor();
+void publishCallStatusSensor();
+void publishRebootButton();
+void publishBarrierButton();
