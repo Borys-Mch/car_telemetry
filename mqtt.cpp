@@ -1,10 +1,5 @@
 #include "mqtt.h"
 
-TinyGsm modem(SerialAT);
-TinyGsmClient client(modem);
-SSLClient sslClient(&client);
-PubSubClient mqttClient(sslClient);
-
 bool initMQTT()
 {
   Serial.println("Ініціалізація MQTT...");
