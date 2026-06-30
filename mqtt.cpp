@@ -117,9 +117,9 @@ void mqttConnect()
            MQTT_HOST, MQTT_PORT, MQTT_USER, MQTT_PASS);
 
   // LWT topic
-  GSM.printf("AT+CMQTTWILLTOPIC=0,%d\r\n", strlen("car/availability"));
+  GSM.printf("AT+CMQTTWILLTOPIC=0,%d\r\n", strlen(MQTT_TOPIC_AVAILABILITY));
   delay(200);
-  GSM.print("car/availability");
+  GSM.print(MQTT_TOPIC_AVAILABILITY);
   delay(200);
 
   // LWT payload
@@ -178,7 +178,7 @@ void mqttConnect()
     mqttConnected = true;
     lastSuccessfulPub = millis();
     Serial.println("[MQTT] Connected OK");
-    mqttSendRaw("car/availability", "online", true);
+    mqttSendRaw(MQTT_TOPIC_AVAILABILITY, "online", true);
   }
   else
   {
@@ -301,13 +301,7 @@ void mqttSendSignal(int rssi)
   int dbm = -113 + (rssi * 2);
   int prs = constrain(map(rssi, 0, 31, 0, 100), 0, 100);
   String payload = "{\"rssi\":" + String(rssi) + ",\"dbm\":" + String(dbm) + ",\"prs\":" + String(prs) + "}";
-  mqttSendRaw("car/telemetry", payload, false);
-}
-
-void mqttSendCallStatus(const String &status)
-{
-  String payload = "{\"call\":\"" + status + "\"}";
-  mqttSendRaw("car/status", payload, true);
+  mqttSendRaw(MQTT_TOPIC_TELEMETRY, payload, false);
 }
 
 void mqttPublishSignalDiscovery()
@@ -316,21 +310,27 @@ void mqttPublishSignalDiscovery()
   mqttPublishDiscovery(discTopic, [](JsonObject &root)
                        {
     root["name"]                    = "Modem Signal";
-    root["state_topic"]             = "car/telemetry";
+    root["state_topic"]             = MQTT_TOPIC_TELEMETRY;
     root["state_class"]             = "measurement";
     root["unit_of_measurement"]     = "%";
     root["value_template"]          = "{{ value_json.prs }}";
-    root["json_attributes_topic"]   = "car/telemetry";
+    root["json_attributes_topic"]   = MQTT_TOPIC_TELEMETRY;
     root["unique_id"]               = "modem_signal";
-    root["availability_topic"]      = "car/availability";
+    root["availability_topic"]      = MQTT_TOPIC_AVAILABILITY;
     root["payload_available"]       = "online";
     root["payload_not_available"]   = "offline";
 
     JsonObject dev = root["device"].to<JsonObject>();
-    dev["identifiers"][0] = "car_info";
-    dev["name"]           = "Car Info";
-    dev["model"]          = "ESP32-S3 + A7670E + ELM327";
-    dev["manufacturer"]   = "DEREN"; });
+    dev["name"]           = MQTT_CLIENT_NAME;
+    dev["identifiers"][0] = MQTT_CLIENT_ID;
+    dev["model"]          = MQTT_CLIENT_MODEL;
+    dev["manufacturer"]   = MQTT_CLIENT_MANUFACTURER; });
+}
+
+void mqttSendCallStatus(const String &number, const String &status)
+{
+  String payload = "{\"number\":\"" + number + "\",\"state\":\"" + status + "\"}";
+  mqttSendRaw(MQTT_TOPIC_STATUS, payload, true);
 }
 
 void mqttPublishCallStatusDiscovery()
@@ -338,18 +338,18 @@ void mqttPublishCallStatusDiscovery()
   const char *discTopic = "homeassistant/sensor/car_call_status/config";
   mqttPublishDiscovery(discTopic, [](JsonObject &root)
                        {
-    root["name"]           = "Car Call Status";
-    root["state_topic"]    = "car/status";
-    root["value_template"] = "{{ value_json.call }}";
-    root["unique_id"]      = "car_call_status";
-    root["icon"]           = "mdi:phone";
-    root["availability_topic"]    = "car/availability";
+    root["name"]                  = "Call Status";
+    root["state_topic"]           = MQTT_TOPIC_STATUS;
+    root["value_template"]        = "{{ value_json.state }}";
+    root["unique_id"]             = "call_status";
+    root["icon"]                  = "mdi:phone";
+    root["availability_topic"]    = MQTT_TOPIC_AVAILABILITY;
     root["payload_available"]     = "online";
     root["payload_not_available"] = "offline";
 
     JsonObject dev = root["device"].to<JsonObject>();
-    dev["identifiers"][0] = "car_info";
-    dev["name"]           = "Car Info"; });
+    dev["name"]           = MQTT_CLIENT_NAME;
+    dev["identifiers"][0] = MQTT_CLIENT_ID; });
 }
 
 void mqttSendIncomingDiscovery()
@@ -358,30 +358,18 @@ void mqttSendIncomingDiscovery()
   mqttPublishDiscovery(discTopic, [](JsonObject &root)
                        {
     root["name"]                  = "Incoming Call";
-    root["state_topic"]           = "car/incoming";
+    root["state_topic"]           = MQTT_TOPIC_STATUS;
     root["value_template"]        = "{{ value_json.number }}";
-    root["json_attributes_topic"] = "car/incoming";
+    root["json_attributes_topic"] = MQTT_TOPIC_STATUS;
     root["unique_id"]             = "car_incoming_call";
     root["icon"]                  = "mdi:phone-incoming";
-    root["availability_topic"]    = "car/availability";
+    root["availability_topic"]    = MQTT_TOPIC_AVAILABILITY;
     root["payload_available"]     = "online";
     root["payload_not_available"] = "offline";
 
     JsonObject dev = root["device"].to<JsonObject>();
-    dev["identifiers"][0] = "car_info";
-    dev["name"]           = "Car Info"; });
-}
-
-void mqttSendIncomingCall(const String &number)
-{
-  String payload = "{\"number\":\"" + number + "\",\"state\":\"ringing\"}";
-  mqttSendRaw("car/incoming", payload, true);
-}
-
-void mqttClearIncomingCall()
-{
-  String payload = "{\"number\":\"\",\"state\":\"idle\"}";
-  mqttSendRaw("car/incoming", payload, true);
+    dev["name"]           = MQTT_CLIENT_NAME;
+    dev["identifiers"][0] = MQTT_CLIENT_ID; });
 }
 
 void mqttPublishGateButtonDiscovery()
@@ -389,18 +377,18 @@ void mqttPublishGateButtonDiscovery()
   const char *discTopic = "homeassistant/button/car_gate/config";
   mqttPublishDiscovery(discTopic, [](JsonObject &root)
                        {
-    root["name"]          = "Gate Open";
-    root["command_topic"] = "car/cmd";
-    root["payload_press"] = "gate";
-    root["unique_id"]     = "car_gate_btn";
-    root["icon"]          = "mdi:boom-gate-outline";
-    root["availability_topic"]    = "car/availability";
+    root["name"]                  = "Gate Open";
+    root["command_topic"]         = MQTT_TOPIC_SUBSCRIBE;
+    root["payload_press"]         = "gate";
+    root["unique_id"]             = "car_gate_btn";
+    root["icon"]                  = "mdi:boom-gate-outline";
+    root["availability_topic"]    = MQTT_TOPIC_AVAILABILITY;
     root["payload_available"]     = "online";
     root["payload_not_available"] = "offline";
 
     JsonObject dev = root["device"].to<JsonObject>();
-    dev["identifiers"][0] = "car_info";
-    dev["name"]           = "Car Info"; });
+    dev["name"]           = MQTT_CLIENT_NAME;
+    dev["identifiers"][0] = MQTT_CLIENT_ID; });
 }
 
 void mqttPublishHangupButtonDiscovery()
@@ -408,48 +396,63 @@ void mqttPublishHangupButtonDiscovery()
   const char *discTopic = "homeassistant/button/car_call_end/config";
   mqttPublishDiscovery(discTopic, [](JsonObject &root)
                        {
-    root["name"]          = "End Call";
-    root["command_topic"] = "car/cmd";
-    root["payload_press"] = "hangup";
-    root["unique_id"]     = "car_call_end_btn";
-    root["icon"]          = "mdi:phone-hangup";
-    root["availability_topic"]    = "car/availability";
+    root["name"]                  = "End Call";
+    root["command_topic"]         = MQTT_TOPIC_SUBSCRIBE;
+    root["payload_press"]         = "hangup";
+    root["unique_id"]             = "car_call_end_btn";
+    root["icon"]                  = "mdi:phone-hangup";
+    root["availability_topic"]    = MQTT_TOPIC_AVAILABILITY;
     root["payload_available"]     = "online";
     root["payload_not_available"] = "offline";
 
     JsonObject dev = root["device"].to<JsonObject>();
-    dev["identifiers"][0] = "car_info";
-    dev["name"]           = "Car Info"; });
+    dev["name"]           = MQTT_CLIENT_NAME;
+    dev["identifiers"][0] = MQTT_CLIENT_ID; });
 }
 
-void mqttSendGps(float lat, float lon, int sats)
+void mqttSendGps(float lat, float lon, int sats, const String &status, bool hasFix)
 {
   String payload = "{";
-  payload += "\"latitude\":" + String(lat, 6) + ",";
-  payload += "\"longitude\":" + String(lon, 6) + ",";
-  payload += "\"sat\":" + String(sats);
+  if (hasFix)
+  {
+    payload += "\"latitude\":" + String(lat, 6) + ",";
+    payload += "\"longitude\":" + String(lon, 6) + ",";
+    payload += "\"sat\":" + String(sats) + ",";
+  }
+  else
+  {
+    payload += "\"latitude\":null,";
+    payload += "\"longitude\":null,";
+    payload += "\"sat\":null,";
+  }
+  payload += "\"status\":\"" + status + "\"";
   payload += "}";
-  mqttSendRaw("car/gps", payload, true);
+  mqttSendRaw(MQTT_TOPIC_GPS, payload, true);
 }
 
 void mqttSendDiscoveryGps()
 {
-  String payload = "{";
-  payload += "\"name\":\"Car GPS\"";
-  payload += ",\"state_topic\":\"car/gps\"";
-  payload += ",\"json_attributes_topic\":\"car/gps\"";
-  payload += ",\"unique_id\":\"car_gpstracker\"";
-  payload += ",\"source_type\":\"gps\"";
-  payload += ",\"device\":{";
-  payload += "\"identifiers\":[\"car_info\"],";
-  payload += "\"name\":\"Car Info\"";
-  payload += "}}";
-  mqttSendRaw("homeassistant/device_tracker/cargps/config", payload, true);
+  const char *discTopic = "homeassistant/device_tracker/cargps/config";
+  mqttPublishDiscovery(discTopic, [](JsonObject &root)
+                       {
+    root["name"]                  = "Car GPS";
+    root["state_topic"]           = MQTT_TOPIC_GPS;
+    root["json_attributes_topic"] = MQTT_TOPIC_GPS;
+    root["unique_id"]             = "car_gpstracker";
+    root["source_type"]           = "gps";
+    root["icon"]                  = "mdi:satellite-variant";
+    root["availability_topic"]    = MQTT_TOPIC_AVAILABILITY;
+    root["payload_available"]     = "online";
+    root["payload_not_available"] = "offline";
+
+    JsonObject dev = root["device"].to<JsonObject>();
+    dev["name"]           = MQTT_CLIENT_NAME;
+    dev["identifiers"][0] = MQTT_CLIENT_ID; });
 }
 
 void mqttSubscribeCmd()
 {
-  const char *topic = "car/cmd";
+  const char *topic = MQTT_TOPIC_SUBSCRIBE;
   GSM.printf("AT+CMQTTSUB=0,%d,1\r\n", strlen(topic));
   delay(300);
   GSM.print(topic);

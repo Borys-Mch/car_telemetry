@@ -55,7 +55,7 @@ void startBarrierCall()
   callState = CallState::Calling;
   callStartMs = millis();
 
-  mqttSendCallStatus("calling");
+  mqttSendCallStatus("", "calling");
 }
 
 void setup()
@@ -133,14 +133,13 @@ void loop()
       {
         Serial.println("[CALL] NO CARRIER -> idle");
         callState = CallState::Idle;
-        mqttSendCallStatus("idle");
-        mqttClearIncomingCall();
+        mqttSendCallStatus("", "idle");
       }
 
       if (line.indexOf("VOICE CALL: END") != -1)
       {
         callState = CallState::Idle;
-        mqttSendCallStatus("idle");
+        mqttSendCallStatus("", "idle");
       }
 
       // ── GPS ───────────────────────────────────────────────────────────────
@@ -149,6 +148,7 @@ void loop()
         if (line.indexOf(",,,,") != -1)
         {
           Serial.println("[GPS] No fix yet");
+          mqttSendGps(0, 0, 0, "GPS unavailable", false);
         }
         else
         {
@@ -188,11 +188,12 @@ void loop()
               Serial.println(lonDeg, 6);
 
               int sats = line.substring(idx[0] + 1, idx[1]).toInt();
-              mqttSendGps(latDeg, lonDeg, sats);
+              mqttSendGps(latDeg, lonDeg, sats, "", true);
             }
             else
             {
               Serial.println("[GPS] Fix out of UA range, ignored");
+              mqttSendGps(0, 0, 0, "Electronic warfare", false);
             }
           }
         }
@@ -208,7 +209,7 @@ void loop()
         {
           String number = line.substring(firstQuote + 1, secondQuote);
           Serial.println("Incoming: " + number);
-          mqttSendIncomingCall(number);
+          mqttSendCallStatus(number, "ringing");
         }
       }
 
@@ -245,8 +246,7 @@ void loop()
               Serial.println("[CALL] Hangup from HA");
               GSM.println("AT+CHUP");
               callState = CallState::Idle;
-              mqttSendCallStatus("idle");
-              mqttClearIncomingCall();
+              mqttSendCallStatus("", "idle");
             }
           }
 

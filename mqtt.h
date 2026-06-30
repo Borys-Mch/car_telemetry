@@ -17,10 +17,8 @@ void mqttHandleURC(const String &line);
 
 // ─── publish ─────────────────────────────────────────────────────────────────
 void mqttSendSignal(int rssi);
-void mqttSendCallStatus(const String &status);
-void mqttSendIncomingCall(const String &number);
-void mqttClearIncomingCall();
-void mqttSendGps(float lat, float lon, int sats);
+void mqttSendCallStatus(const String &number, const String &status);
+void mqttSendGps(float lat, float lon, int sats, const String &status, bool hasFix);
 
 // ─── subscribe ───────────────────────────────────────────────────────────────
 void mqttSubscribeCmd();
