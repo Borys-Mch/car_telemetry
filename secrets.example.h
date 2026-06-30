@@ -19,4 +19,4 @@ static constexpr const char *MQTT_TOPIC_SUBSCRIBE = "car/cmd";
 static constexpr const char *MQTT_TOPIC_PUBLISH = "car/telemetry";
 
 // Номер шлагбауму
-static constexpr const char *BARRIER_NUMBER = "+380690000000";
+static constexpr const char *GATE_NUMBER = "+380690000000";

@@ -1,183 +1,165 @@
 #include "modem.h"
+#include "secrets.h"
 
-TinyGsm modem(SerialAT);
-TinyGsmClient gsmClient(modem);
-SSLClient sslClient(&gsmClient);
-PubSubClient mqttClient(sslClient);
+HardwareSerial GSM(2);
 
-String callStatus = "Idle";
-bool callInProgress = false;
+// Локальні змінні, які раніше були глобальними в .ino
+static String line; // поки що можна й не використовувати, але лишимо якщо треба буде
 
-bool initModem()
+void sendAT(const char *cmd)
 {
-  SerialAT.begin(GSM_BAUD, SERIAL_8N1, GSM_RX, GSM_TX);
+  GSM.println(cmd);
+}
+
+void flushGSM()
+{
+  while (GSM.available())
+  {
+    Serial.write(GSM.read());
+  }
+}
+
+static bool waitForResponse(const char *ok, const char *err = "ERROR", uint32_t timeout = 2000)
+{
+  String resp = "";
+  uint32_t start = millis();
+
+  while (millis() - start < timeout)
+  {
+    while (GSM.available())
+    {
+      char c = GSM.read();
+      resp += c;
+      Serial.write(c);
+    }
+
+    if (resp.indexOf(ok) != -1)
+      return true;
+    if (err && resp.indexOf(err) != -1)
+      return false;
+  }
+
+  return false;
+}
+
+bool sendATWait(const char *cmd, const char *ok, uint32_t timeout)
+{
+  flushGSM();
+  Serial.print(">> ");
+  Serial.println(cmd);
+  GSM.println(cmd);
+  return waitForResponse(ok, "ERROR", timeout);
+}
+
+bool waitForAT(uint32_t totalTimeout)
+{
+  uint32_t start = millis();
+
+  while (millis() - start < totalTimeout)
+  {
+    if (sendATWait("AT", "OK", 1000))
+      return true;
+    delay(1000);
+  }
+  return false;
+}
+
+bool waitForSIM(uint32_t totalTimeout)
+{
+  uint32_t start = millis();
+
+  while (millis() - start < totalTimeout)
+  {
+    flushGSM();
+    Serial.println(">> AT+CPIN?");
+    GSM.println("AT+CPIN?");
+
+    String resp = "";
+    uint32_t t = millis();
+
+    while (millis() - t < 1500)
+    {
+      while (GSM.available())
+      {
+        char c = GSM.read();
+        resp += c;
+        Serial.write(c);
+      }
+    }
+
+    if (resp.indexOf("READY") != -1)
+      return true;
+    delay(1000);
+  }
+
+  return false;
+}
+
+bool waitForNetwork(uint32_t totalTimeout)
+{
+  uint32_t start = millis();
+
+  while (millis() - start < totalTimeout)
+  {
+    flushGSM();
+    Serial.println(">> AT+CREG?");
+    GSM.println("AT+CREG?");
+
+    String resp = "";
+    uint32_t t = millis();
+
+    while (millis() - t < 1500)
+    {
+      while (GSM.available())
+      {
+        char c = GSM.read();
+        resp += c;
+        Serial.write(c);
+      }
+    }
+
+    if (resp.indexOf("+CREG: 0,1") != -1 ||
+        resp.indexOf("+CREG: 0,5") != -1)
+      return true;
+
+    delay(1500);
+  }
+
+  return false;
+}
+
+// Головна функція, яку викликає .ino
+bool modemInit()
+{
+  GSM.begin(GSM_BAUD, SERIAL_8N1, GSM_RX, GSM_TX);
+
+  Serial.println("Waiting for modem autostart...");
   delay(3000);
 
-  Serial.println("Запуск...");
-
-  // Рестарт модему з затримками
-  modem.restart();
-  delay(3000); // Даємо час на ініціалізацію
-
-  // Отримуємо інформацію з таймаутом
-  unsigned long start = millis();
-  String modemInfo = "";
-
-  while (millis() - start < 5000)
-  { // 5 секунд таймаут
-    modemInfo = modem.getModemInfo();
-    if (modemInfo.length() > 0)
-    {
-      break;
-    }
-    delay(500);
-    yield(); // Важливо для Watchdog
-  }
-
-  if (modemInfo.length() > 0)
+  if (!waitForAT(30000))
   {
-    Serial.println("Модем: " + modemInfo);
-    return true;
-  }
-
-  Serial.println("Помилка: модем не відповідає!");
-  return false;
-}
-
-bool connectToGPRS()
-{
-  Serial.print("Підключення до мережі ");
-  Serial.print(APN);
-
-  // Спроба підключення з таймаутом
-  unsigned long start = millis();
-  while (millis() - start < 30000)
-  { // 30 секунд
-    if (modem.gprsConnect(APN))
-    {
-      Serial.println(" OK");
-      Serial.print("IP: ");
-      Serial.println(modem.getLocalIP());
-      return true;
-    }
-    delay(1000);
-    yield();
-    Serial.print(".");
-  }
-
-  Serial.println(" Помилка!");
-  return false;
-}
-
-int getSignalQuality()
-{
-  return modem.getSignalQuality();
-}
-
-String getIncomingNumber()
-{
-
-  if (callInProgress || callStatus == "Calling")
-  {
-    return "";
-  }
-
-  SerialAT.println("AT+CLCC");
-
-  unsigned long t = millis();
-  String response = "";
-  while (millis() - t < 500)
-  {
-    while (SerialAT.available())
-    {
-      char c = SerialAT.read();
-      response += c;
-    }
-    yield(); // годуємо WDT поки чекаємо
-  }
-
-  int idx = response.indexOf("+CLCC:");
-  if (idx != -1)
-  {
-    int comma1 = response.indexOf(",", idx);
-    int comma2 = response.indexOf(",", comma1 + 1);
-    String direction = response.substring(comma1 + 1, comma2);
-    direction.trim();
-
-    // Якщо вихідний дзвінок - ігноруємо
-    if (direction == "1")
-    {
-      return "";
-    }
-
-    int start = response.indexOf("\"", idx);
-    int end = response.indexOf("\"", start + 1);
-    if (start != -1 && end != -1)
-      return response.substring(start + 1, end);
-  }
-  return "";
-}
-
-bool callBarrier()
-{
-  if (callInProgress || callStatus == "Calling")
-  {
-    Serial.println("Дзвінок вже виконується!");
+    Serial.println("ERROR: modem does not answer AT");
     return false;
   }
 
-  callInProgress = true;
-  callStatus = "Calling";
-  Serial.println("Дзвінок на шлагбаум: " + String(BARRIER_NUMBER));
+  Serial.println("MODEM OK");
 
-  // Здійснюємо дзвінок
-  SerialAT.println("ATD" + String(BARRIER_NUMBER) + ";");
-  delay(500);
+  sendATWait("ATE0", "OK", 2000);
+  sendATWait("AT+CMEE=2", "OK", 2000);
 
-  // Читаємо відповідь
-  String response = "";
-  unsigned long start = millis();
-  while (millis() - start < 3000)
+  if (!waitForSIM(20000))
   {
-    if (SerialAT.available())
-    {
-      response += (char)SerialAT.read();
-      if (response.indexOf("OK") != -1 || response.indexOf("CONNECT") != -1)
-      {
-        break;
-      }
-    }
-    yield();
+    Serial.println("ERROR: SIM not ready");
+    return false;
   }
+  Serial.println("SIM READY");
 
-  Serial.println("Відповідь: " + response);
-
-  // Чекаємо 3 секунди для з'єднання
-  delay(3000);
-
-  // Завершуємо дзвінок
-  SerialAT.println("ATH");
-  delay(500);
-
-  // Очищаємо буфер від відповідей
-  while (SerialAT.available())
+  if (!waitForNetwork(45000))
   {
-    SerialAT.read();
+    Serial.println("ERROR: network not registered");
+    return false;
   }
-
-  callInProgress = false;
-  callStatus = "Idle";
-  Serial.println("Дзвінок завершено");
+  Serial.println("NETWORK READY");
 
   return true;
-}
-
-void setCallStatus(const String &status)
-{
-  callStatus = status;
-}
-
-String getCallStatus()
-{
-  return callStatus;
 }
