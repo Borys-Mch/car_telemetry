@@ -19,6 +19,7 @@ void mqttHandleURC(const String &line);
 void mqttSendSignal(int rssi);
 void mqttSendCallStatus(const String &number, const String &status);
 void mqttSendGps(float lat, float lon, int sats, const String &status, bool hasFix);
+void mqttSendObd(float rpm, bool hasRpm, int speed, bool hasSpeed, int coolant, bool hasCoolant, float voltage, bool hasVoltage);
 
 // ─── subscribe ───────────────────────────────────────────────────────────────
 void mqttSubscribeCmd();
@@ -31,3 +32,4 @@ void mqttSendIncomingDiscovery();
 void mqttPublishGateButtonDiscovery();
 void mqttPublishHangupButtonDiscovery();
 void mqttSendDiscoveryGps();
+void mqttPublishObdDiscovery();

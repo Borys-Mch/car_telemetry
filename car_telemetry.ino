@@ -1,6 +1,6 @@
 /*
  * Car Telemetry - MQTT + FreeRTOS tasks
- * ESP32-S3 + A7670E (UART1 GPIO18/17) + ELM327 (UART0 GPIO44/43)
+ * ESP32-S3 + A7670E + ELM327
  *
  * Бібліотеки: ArduinoJson
  * Arduino IDE → Tools → USB CDC On Boot: Enabled
@@ -96,6 +96,8 @@ void setup()
     mqttPublishHangupButtonDiscovery();
     delay(500);
     mqttSendDiscoveryGps();
+    delay(500);
+    mqttPublishObdDiscovery();
   }
   else
   {
@@ -241,4 +243,5 @@ void loop()
 
   // ── MQTT watchdog: перевірка і reconnect ──────────────────────────────────
   mqttWatchdog();
+
 }

@@ -3,6 +3,10 @@
 #include "config.h"
 #include "secrets.h"
 
+#ifndef MQTT_TOPIC_OBD
+#define MQTT_TOPIC_OBD "car/obd"
+#endif
+
 // ─── стан з'єднання ───────────────────────────────────────────────────────────
 bool mqttConnected = false;
 
@@ -430,6 +434,23 @@ void mqttSendGps(float lat, float lon, int sats, const String &status, bool hasF
   mqttSendRaw(MQTT_TOPIC_GPS, payload, true);
 }
 
+void mqttSendObd(float rpm, bool hasRpm, int speed, bool hasSpeed, int coolant, bool hasCoolant, float voltage, bool hasVoltage)
+{
+  String payload = "{";
+
+  payload += "\"rpm\":";
+  payload += hasRpm ? String(rpm, 0) : "null";
+  payload += ",\"speed\":";
+  payload += hasSpeed ? String(speed) : "null";
+  payload += ",\"coolant\":";
+  payload += hasCoolant ? String(coolant) : "null";
+  payload += ",\"voltage\":";
+  payload += hasVoltage ? String(voltage, 1) : "null";
+  payload += "}";
+
+  mqttSendRaw(MQTT_TOPIC_OBD, payload, false);
+}
+
 void mqttSendDiscoveryGps()
 {
   const char *discTopic = "homeassistant/device_tracker/cargps/config";
@@ -448,6 +469,83 @@ void mqttSendDiscoveryGps()
     JsonObject dev = root["device"].to<JsonObject>();
     dev["name"]           = MQTT_CLIENT_NAME;
     dev["identifiers"][0] = MQTT_CLIENT_ID; });
+}
+
+static void addObdSensorDiscovery(const char *discTopic,
+                                  const char *name,
+                                  const char *uniqueId,
+                                  const char *valueTemplate,
+                                  const char *unit,
+                                  const char *deviceClass,
+                                  const char *stateClass,
+                                  const char *icon)
+{
+  mqttPublishDiscovery(discTopic, [=](JsonObject &root)
+                       {
+    root["name"]                  = name;
+    root["state_topic"]           = MQTT_TOPIC_OBD;
+    root["value_template"]        = valueTemplate;
+    root["unique_id"]             = uniqueId;
+    root["availability_topic"]    = MQTT_TOPIC_AVAILABILITY;
+    root["payload_available"]     = "online";
+    root["payload_not_available"] = "offline";
+
+    if (unit)
+      root["unit_of_measurement"] = unit;
+    if (deviceClass)
+      root["device_class"] = deviceClass;
+    if (stateClass)
+      root["state_class"] = stateClass;
+    if (icon)
+      root["icon"] = icon;
+
+    JsonObject dev = root["device"].to<JsonObject>();
+    dev["name"]           = MQTT_CLIENT_NAME;
+    dev["identifiers"][0] = MQTT_CLIENT_ID;
+    dev["model"]          = MQTT_CLIENT_MODEL;
+    dev["manufacturer"]   = MQTT_CLIENT_MANUFACTURER; });
+}
+
+void mqttPublishObdDiscovery()
+{
+  addObdSensorDiscovery("homeassistant/sensor/car_obd_rpm/config",
+                        "Engine RPM",
+                        "car_obd_rpm",
+                        "{{ value_json.rpm }}",
+                        "rpm",
+                        nullptr,
+                        "measurement",
+                        "mdi:engine");
+  delay(500);
+
+  addObdSensorDiscovery("homeassistant/sensor/car_obd_speed/config",
+                        "OBD Speed",
+                        "car_obd_speed",
+                        "{{ value_json.speed }}",
+                        "km/h",
+                        "speed",
+                        "measurement",
+                        "mdi:speedometer");
+  delay(500);
+
+  addObdSensorDiscovery("homeassistant/sensor/car_obd_coolant/config",
+                        "Coolant Temperature",
+                        "car_obd_coolant",
+                        "{{ value_json.coolant }}",
+                        "°C",
+                        "temperature",
+                        "measurement",
+                        "mdi:coolant-temperature");
+  delay(500);
+
+  addObdSensorDiscovery("homeassistant/sensor/car_obd_voltage/config",
+                        "OBD Voltage",
+                        "car_obd_voltage",
+                        "{{ value_json.voltage }}",
+                        "V",
+                        "voltage",
+                        "measurement",
+                        "mdi:car-battery");
 }
 
 void mqttSubscribeCmd()
